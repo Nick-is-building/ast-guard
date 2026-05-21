@@ -11,31 +11,31 @@ UNDERLINE = "\033[4m"
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ast-guard v1.0 - Deterministischer Reward-Hacking-Detektor fuer LLM-generierten Python-Code."
+        description="ast-guard v1.0 - Deterministic reward hacking detector for LLM-generated Python code."
     )
-    subparsers = parser.add_subparsers(dest="command", help="Verfuegbare Subcommands")
+    subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
     
     # 1. check
-    check_parser = subparsers.add_parser("check", help="Prueft generierten Python-Code gegen Originalcode.")
-    check_parser.add_argument("original", help="Pfad zum Originalcode (.py)")
-    check_parser.add_argument("generated", help="Pfad zum generierten/optimierten Code (.py)")
+    check_parser = subparsers.add_parser("check", help="Checks generated Python code against original code.")
+    check_parser.add_argument("original", help="Path to the original code (.py)")
+    check_parser.add_argument("generated", help="Path to the generated/optimized code (.py)")
     check_parser.add_argument("--mode", choices=["strict", "standard", "audit"], help="Sensitivity Mode (CLI-Default: standard, API-Default: strict)")
-    check_parser.add_argument("--json", action="store_true", help="Gibt den Analyse-Report im JSON-Format aus")
-    check_parser.add_argument("--no-telemetry", action="store_true", help="Deaktiviert das lokale Loggen der Telemetrie-Daten")
+    check_parser.add_argument("--json", action="store_true", help="Output the analysis report in JSON format")
+    check_parser.add_argument("--no-telemetry", action="store_true", help="Disables local telemetry logging")
     
     # 2. feedback
-    fb_parser = subparsers.add_parser("feedback", help="Gibt Feedback zu einem bestimmten Scan ab.")
-    fb_parser.add_argument("--id", required=True, help="Scan-ID des betreffenden Scans")
+    fb_parser = subparsers.add_parser("feedback", help="Submit feedback for a specific scan.")
+    fb_parser.add_argument("--id", required=True, help="Scan ID of the relevant scan")
     fb_parser.add_argument("--label", required=True, choices=["correct", "false-positive", "false-negative"], help="Feedback-Label")
-    fb_parser.add_argument("--comment", default="", help="Optionaler Freitext-Kommentar")
+    fb_parser.add_argument("--comment", default="", help="Optional free-text comment")
     
     # 3. export
-    export_parser = subparsers.add_parser("export", help="Exportiert die lokale anonymisierte Telemetrie-Datenbank.")
-    export_parser.add_argument("--output", required=True, help="Zielpfad fuer die bereinigte JSONL-Datei")
+    export_parser = subparsers.add_parser("export", help="Exports the local anonymized telemetry database.")
+    export_parser.add_argument("--output", required=True, help="Target path for the sanitized JSONL file")
     
     # 4. stats
-    stats_parser = subparsers.add_parser("stats", help="Zeigt Statistiken zur lokalen Telemetrie-Nutzung an.")
-    stats_parser.add_argument("--disable-prompt", action="store_true", help="Deaktiviert den einmaligen Sharing-Prompt dauerhaft")
+    stats_parser = subparsers.add_parser("stats", help="Shows local telemetry usage statistics.")
+    stats_parser.add_argument("--disable-prompt", action="store_true", help="Permanently disables the sharing prompt")
     
     args = parser.parse_args()
     
@@ -76,10 +76,10 @@ def main():
         if not args.json and mode_val != "audit" and telemetry_enabled:
             should_prompt, count = check_sharing_prompt()
             if should_prompt:
-                print(f"\033[94m{BOLD}[INFO]{RESET} Sie haben bereits {count} Scans mit ast-guard durchgefuehrt!")
-                print("  Moechten Sie das anonymisierte Community-Dataset unterstuetzen?")
-                print(f"  Exportieren Sie Ihre bereinigten Daten via: {BOLD}ast-guard export --output data.jsonl{RESET}")
-                print(f"  Diesen Prompt dauerhaft deaktivieren: {BOLD}ast-guard stats --disable-prompt{RESET}\n")
+                print(f"\033[94m{BOLD}[INFO]{RESET} You have completed {count} scans with ast-guard!")
+                print("  Would you like to contribute to the anonymized community dataset?")
+                print(f"  Export your sanitized data via: {BOLD}ast-guard export --output data.jsonl{RESET}")
+                print(f"  Permanently disable this prompt: {BOLD}ast-guard stats --disable-prompt{RESET}\n")
                 
         # Exit code logic
         if mode_val == "audit":
@@ -92,25 +92,25 @@ def main():
     elif args.command == "feedback":
         success = feedback(args.id, args.label, args.comment)
         if success:
-            print(f"Feedback erfolgreich fuer Scan '{args.id}' hinterlegt!")
+            print(f"Feedback successfully submitted for scan '{args.id}'!")
             sys.exit(0)
         else:
-            print("Fehler beim Speichern des Feedbacks.", file=sys.stderr)
+            print("Error saving feedback.", file=sys.stderr)
             sys.exit(1)
             
     elif args.command == "export":
         success = export_telemetry(args.output)
         if success:
-            print(f"Anonymisierte Telemetrie-Daten erfolgreich nach '{args.output}' exportiert!")
+            print(f"Anonymized telemetry data successfully exported to '{args.output}'!")
             sys.exit(0)
         else:
-            print("Fehler beim Exportieren der Telemetrie-Daten. Existieren bereits Scans?", file=sys.stderr)
+            print("Error exporting telemetry data. Do any scans exist yet?", file=sys.stderr)
             sys.exit(1)
             
     elif args.command == "stats":
         if args.disable_prompt:
             disable_sharing_prompt()
-            print("Sharing-Prompt erfolgreich dauerhaft deaktiviert.")
+            print("Sharing prompt permanently disabled.")
             sys.exit(0)
             
         stats = get_stats()
