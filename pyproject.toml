@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ast-guard"
+version = "1.0.0"
+description = "Deterministic reward-hacking detector for LLM-generated Python code."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+ast-guard = "ast_guard.cli:main"

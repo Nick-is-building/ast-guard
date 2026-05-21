@@ -1,0 +1,300 @@
+import ast
+
+def is_docstring(node):
+    """
+    Helper to check if an AST statement node is a docstring.
+    """
+    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+        return True
+    return False
+
+def find_docstring_node_ids(tree):
+    """
+    Finds and returns the object IDs of all docstring nodes (module, function, class)
+    in the given AST to prevent them from being counted as normal/long strings.
+    """
+    docstring_ids = set()
+    
+    def check_body(body):
+        if body and isinstance(body[0], ast.Expr):
+            expr = body[0]
+            if isinstance(expr.value, ast.Constant) and isinstance(expr.value.value, str):
+                docstring_ids.add(id(expr.value))
+                
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            check_body(node.body)
+            
+    return docstring_ids
+
+def find_guard_clauses(func_node):
+    """
+    Identifies guard clauses directly on the top-level body of a function node.
+    Returns a set of guard clause If node IDs.
+    """
+    guards = set()
+    body = func_node.body
+    
+    # If the first statement is a docstring, ignore it for positioning checks
+    if body and is_docstring(body[0]):
+        body = body[1:]
+        
+    # Check the top-level statements at index 0, 1, or 2 of the remaining body
+    for i in range(min(3, len(body))):
+        stmt = body[i]
+        if isinstance(stmt, ast.If):
+            # Must have no orelse (else/elif)
+            if not stmt.orelse:
+                # Must end with Return or Raise in its body
+                if stmt.body:
+                    last_stmt = stmt.body[-1]
+                    if isinstance(last_stmt, (ast.Return, ast.Raise)):
+                        guards.add(id(stmt))
+    return guards
+
+def count_ifs(tree):
+    """
+    Counts normal If nodes, excluding identified guard clauses in any function.
+    Returns a tuple: (if_count, guard_clause_count).
+    """
+    # 1. Find all function nodes
+    funcs = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            funcs.append(node)
+            
+    # 2. Identify all guard clauses
+    all_guard_ids = set()
+    for func in funcs:
+        all_guard_ids.update(find_guard_clauses(func))
+        
+    # 3. Count all If nodes in AST that are not guard clauses
+    if_count = 0
+    guard_clause_count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If):
+            if id(node) in all_guard_ids:
+                guard_clause_count += 1
+            else:
+                if_count += 1
+                
+    return if_count, guard_clause_count
+
+def get_node_loop_depth(root_node):
+    """
+    Calculates the maximum loop nesting depth inside root_node, skipping nested functions/classes.
+    """
+    def visit(node, current_depth):
+        if node is not root_node and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return 0
+            
+        if isinstance(node, (ast.For, ast.While)):
+            new_depth = current_depth + 1
+            max_depth = new_depth
+            for child in ast.iter_child_nodes(node):
+                max_depth = max(max_depth, visit(child, new_depth))
+            return max_depth
+        else:
+            max_depth = current_depth
+            for child in ast.iter_child_nodes(node):
+                max_depth = max(max_depth, visit(child, current_depth))
+            return max_depth
+            
+    return visit(root_node, 0)
+
+def calculate_node_complexity(root_node):
+    """
+    Calculates McCabe Cyclomatic Complexity for a single function or module node,
+    skipping nested functions/classes.
+    """
+    complexity = 1
+    queue = [root_node]
+    while queue:
+        node = queue.pop(0)
+        
+        # Skip nested functions/classes
+        if node is not root_node and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+            
+        # Add to complexity for control flow nodes
+        if isinstance(node, (ast.If, ast.IfExp, ast.For, ast.While, ast.ExceptHandler, ast.With, ast.Assert)):
+            complexity += 1
+        elif isinstance(node, ast.BoolOp):
+            # len(node.values) - 1 is the number of 'and' / 'or' operators
+            complexity += len(node.values) - 1
+        elif hasattr(ast, 'match_case') and isinstance(node, ast.match_case):
+            complexity += 1
+            
+        for child in ast.iter_child_nodes(node):
+            queue.append(child)
+            
+    return complexity
+
+def count_literals(tree, docstring_ids=None):
+    """
+    Counts literal values. Includes all ast.Constant nodes, and dictionary keys
+    that are not ast.Constant nodes (to prevent double-counting).
+    """
+    if docstring_ids is None:
+        docstring_ids = set()
+    literal_count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant):
+            if id(node) not in docstring_ids:
+                literal_count += 1
+        elif isinstance(node, ast.Dict):
+            for key in node.keys:
+                if key is not None and not isinstance(key, ast.Constant):
+                    literal_count += 1
+    return literal_count
+
+def count_long_strings(tree, docstring_ids):
+    """
+    Counts string constants longer than 200 characters, excluding those identified as docstrings.
+    """
+    long_string_count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) not in docstring_ids:
+                if len(node.value) > 200:
+                    long_string_count += 1
+    return long_string_count
+
+def extract_imports(tree):
+    """
+    Extracts imported modules and names as flat strings.
+    For `import os` -> 'os'
+    For `from os import path` -> 'os', 'os.path'
+    """
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module
+            if module:
+                imports.add(module)
+                for alias in node.names:
+                    imports.add(f"{module}.{alias.name}")
+            else:
+                for alias in node.names:
+                    imports.add(alias.name)
+    return sorted(list(imports))
+
+def resolve_call_name(func_node):
+    """
+    Recursively resolves call names to flat string representation.
+    e.g., os.path.join -> 'os.path.join'
+    If base object is dynamic, the attribute name is returned.
+    """
+    if isinstance(func_node, ast.Name):
+        return func_node.id
+    elif isinstance(func_node, ast.Attribute):
+        base = resolve_call_name(func_node.value)
+        if base:
+            return f"{base}.{func_node.attr}"
+        else:
+            return func_node.attr
+    return None
+
+def extract_calls(tree):
+    """
+    Extracts all resolved call names in the AST as a flat list.
+    """
+    calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = resolve_call_name(node.func)
+            if name:
+                calls.append(name)
+    return calls
+
+def count_comprehensions(tree):
+    """
+    Counts comprehensions (list, set, dict, or generator expressions).
+    """
+    count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            count += 1
+    return count
+
+def count_functional_calls(calls):
+    """
+    Counts calls to functional built-ins and standard patterns:
+    map, filter, reduce, sorted, min, max, sum.
+    """
+    functional_names = {"map", "filter", "reduce", "functools.reduce", "sorted", "min", "max", "sum"}
+    count = 0
+    for call in calls:
+        if call in functional_names:
+            count += 1
+    return count
+
+def extract_metrics(code: str) -> dict:
+    """
+    Parses the given Python code string and extracts structured AST metrics.
+    
+    Returns a dictionary containing:
+        - if_count (int)
+        - guard_clause_count (int)
+        - loop_depth (int)
+        - mccabe_complexity (int)
+        - literal_count (int)
+        - long_string_count (int)
+        - import_list (list[str])
+        - call_list (list[str])
+        - comprehension_count (int)
+        - functional_call_count (int)
+    """
+    tree = ast.parse(code)
+    
+    # 1. Docstring detection
+    docstring_ids = find_docstring_node_ids(tree)
+    
+    # 2. If count & Guard Clauses
+    if_count, guard_clause_count = count_ifs(tree)
+    
+    # 3. Find all functions to calculate per-function metrics
+    funcs = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            funcs.append(node)
+            
+    # 4. McCabe Complexity & Loop Depth
+    module_complexity = calculate_node_complexity(tree)
+    module_loop_depth = get_node_loop_depth(tree)
+    
+    if funcs:
+        mccabe_complexity = (module_complexity - 1) + sum(calculate_node_complexity(f) for f in funcs)
+        loop_depth = max([module_loop_depth] + [get_node_loop_depth(f) for f in funcs])
+    else:
+        # Fallback to module level
+        mccabe_complexity = module_complexity
+        loop_depth = module_loop_depth
+        
+    # 5. Literal & Long String Counts
+    literal_count = count_literals(tree, docstring_ids)
+    long_string_count = count_long_strings(tree, docstring_ids)
+    
+    # 6. Imports & Calls
+    import_list = extract_imports(tree)
+    call_list = extract_calls(tree)
+    
+    # 7. Comprehensions & Functional calls
+    comprehension_count = count_comprehensions(tree)
+    functional_call_count = count_functional_calls(call_list)
+    
+    return {
+        "if_count": if_count,
+        "guard_clause_count": guard_clause_count,
+        "loop_depth": loop_depth,
+        "mccabe_complexity": mccabe_complexity,
+        "literal_count": literal_count,
+        "long_string_count": long_string_count,
+        "import_list": import_list,
+        "call_list": call_list,
+        "comprehension_count": comprehension_count,
+        "functional_call_count": functional_call_count
+    }
