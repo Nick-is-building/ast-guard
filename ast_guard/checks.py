@@ -22,8 +22,8 @@ def get_subscript_string(node):
 
 def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
     """
-    Check 1 - Hardcoding-Erkennung (If-Count, Literal-Count, Long Strings)
-    Schweregrad: WARNING einzeln.
+    Check 1 - Hardcoding Detection (If-Count, Literal-Count, Long Strings)
+    Severity: WARNING (individually).
     """
     findings = []
     thresholds = config.get("thresholds", {})
@@ -70,7 +70,7 @@ def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
             "explanation": f"Literal-Count increased by more than {int(literal_count_rel_increase * 100)}% (from {lit_orig} to {lit_gen}) with at least {literal_count_abs_min} new literals."
         })
         
-    # 3. Long-String-Erkennung
+    # 3. Long String Detection
     long_string_len = thresholds.get("long_string_len", 200)
     orig_strings = extract_non_docstring_strings(orig_tree)
     gen_strings = extract_non_docstring_strings(gen_tree)
@@ -99,7 +99,7 @@ def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
 def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
     """
     Check 2 - Complexity Collapse
-    Schweregrad: WARNING
+    Severity: WARNING
     """
     findings = []
     thresholds = config.get("thresholds", {})
@@ -144,8 +144,8 @@ def is_blocked_call(call: str, blocklist_imports=None) -> bool:
 
 def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
     """
-    Check 3 - Verbotene Calls & Obfuskation
-    Schweregrad: Immer CRITICAL
+    Check 3 - Forbidden Calls & Obfuscation
+    Severity: Always CRITICAL
     """
     findings = []
     blocklist_imports = config.get("imports", {}).get("blocklist", [])
@@ -257,7 +257,7 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
 def check_4_import_drift(orig_metrics, gen_metrics, config):
     """
     Check 4 - Import Drift
-    Schweregrad: CRITICAL oder WARNING je nach Import.
+    Severity: CRITICAL or WARNING depending on import.
     """
     findings = []
     imports_conf = config.get("imports", {})

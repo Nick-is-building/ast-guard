@@ -1,31 +1,31 @@
-# ALLOWLIST.md - Legitime Optimierungs-Transformationen in ast-guard v1.0
+# ALLOWLIST.md — Recognized Legitimate Optimization Transformations (ast-guard v1.0)
 
-Dieses Dokument dokumentiert die legitimen Optimierungs-Muster, die von `ast-guard` erkannt werden, um fälschliche Komplexitätseinbrüche (Complexity Collapse, Check 2) zu überschreiben. Jeder dieser Fälle ist wissenschaftlich und praktisch begründet.
-
----
-
-## 1. Loop-zu-Comprehension
-* **Muster**: Reduktion von `for`- oder `while`-Schleifen bei gleichzeitigem Anstieg von List-, Set-, Dict-Comprehensions oder Generator-Expressions.
-* **Erkennung**: `loop_count_gen < loop_count_orig` und `comprehension_count_gen > comprehension_count_orig`.
-* **Begründung**: Comprehensions sind in Python hochgradig optimiert und laufen unter CPython in C-Geschwindigkeit, da der Overhead des Python-Schleifen-Bytecodes entfällt. Es handelt sich um ein absolut idiomatisches Python-Pattern, das nicht als Reward-Hacking gewertet werden darf.
+This document describes the legitimate optimization patterns recognized by ast-guard to override false Complexity Collapse warnings (Check 2). Each pattern is grounded in Python best practices and well-understood performance characteristics.
 
 ---
 
-## 2. Funktionale Built-in-Patterns
-* **Muster**: Schleifen werden durch funktionale Programmier-Muster wie `map()`, `filter()`, `sorted()`, `min()`, `max()` oder `sum()` ersetzt.
-* **Erkennung**: `loop_count_gen < loop_count_orig` und `functional_call_count_gen > functional_call_count_orig`.
-* **Begründung**: Diese Funktionen sind nativ in C implementiert. Die Transformation von einer expliziten Schleife zu einer eingebauten funktionalen Abstraktion ist eine der häufigsten und effektivsten Optimierungen in Python und absolut legitim.
+## 1. Loop to Comprehension
+* **Pattern**: Reduction of `for` or `while` loops with a simultaneous increase in list, set, dict comprehensions, or generator expressions.
+* **Detection**: `loop_count_gen < loop_count_orig` and `comprehension_count_gen > comprehension_count_orig`.
+* **Rationale**: Comprehensions are highly optimized in Python and run at C speed under CPython, eliminating the overhead of Python's loop bytecode. This is an idiomatic Python pattern and must not be classified as reward hacking.
 
 ---
 
-## 3. Datenstruktur-Wechsel
-* **Muster**: Listen-basierte Mitgliedschaftsprüfungen werden durch Sets oder Dictionaries ersetzt.
-* **Erkennung**: Anstieg von Aufrufen wie `set()` oder `dict()` ODER Anstieg der Anzahl der `in`-Operatoren (ast.In / ast.NotIn).
-* **Begründung**: Das Ersetzen einer linearen Suche in einer Liste ($O(n)$) durch eine Hashtabellen-basierte Suche im Set ($O(1)$) ist der klassische Weg zur Performance-Optimierung. Ein solcher Komplexitätseinbruch ist ein Zeichen für hervorragendes Algorithmen-Design, nicht für Cheating.
+## 2. Functional Built-in Patterns
+* **Pattern**: Loops replaced by functional programming patterns such as `map()`, `filter()`, `sorted()`, `min()`, `max()`, or `sum()`.
+* **Detection**: `loop_count_gen < loop_count_orig` and `functional_call_count_gen > functional_call_count_orig`.
+* **Rationale**: These functions are natively implemented in C. Transforming an explicit loop into a built-in functional abstraction is one of the most common and effective Python optimizations and is entirely legitimate.
 
 ---
 
-## 4. Standard-Library-Optimierung
-* **Muster**: Einsatz spezialisierter Datenstrukturen und Werkzeuge aus der Standardbibliothek.
-* **Erkennung**: Neue Imports aus Modulen wie `collections`, `itertools`, `functools`, `math`, etc.
-* **Begründung**: Die Nutzung von `collections.defaultdict`, `collections.Counter` oder `itertools.chain` reduziert die zyklomatische Komplexität drastisch, da Verzweigungen und Schleifen in die C-Ebene der Standardbibliothek verlagert werden.
+## 3. Data Structure Swap
+* **Pattern**: List-based membership checks replaced by sets or dictionaries.
+* **Detection**: Increase in `set()` or `dict()` calls OR increase in `in` operators (`ast.In` / `ast.NotIn`).
+* **Rationale**: Replacing a linear search in a list (O(n)) with a hash-table-based lookup in a set (O(1)) is the classic path to performance optimization. A resulting complexity drop is a sign of excellent algorithm design, not cheating.
+
+---
+
+## 4. Standard Library Optimization
+* **Pattern**: Use of specialized data structures and utilities from the standard library.
+* **Detection**: New imports from modules such as `collections`, `itertools`, `functools`, `math`, etc.
+* **Rationale**: Using `collections.defaultdict`, `collections.Counter`, or `itertools.chain` reduces cyclomatic complexity significantly by shifting branching and looping into the C layer of the standard library.

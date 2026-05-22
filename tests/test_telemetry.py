@@ -44,7 +44,7 @@ def test_log_scan_and_stats():
     orig_metrics = {"if_count": 0, "loop_depth": 0, "literal_count": 1}
     gen_metrics = {"if_count": 0, "loop_depth": 0, "literal_count": 1}
     check_results = {"check_1_hardcoding": {"status": "CLEAN"}}
-    transformations = [{"category": "Loop-zu-Comprehension"}]
+    transformations = [{"category": "Loop to Comprehension"}]
     
     record = telemetry.log_scan(
         orig_code, gen_code, orig_metrics, gen_metrics, check_results, transformations, "strict", "CLEAN"
@@ -57,7 +57,7 @@ def test_log_scan_and_stats():
     stats = telemetry.get_stats()
     assert stats["total_scans"] == 1
     assert stats["verdicts"]["CLEAN"] == 1
-    assert stats["transformations"]["Loop-zu-Comprehension"] == 1
+    assert stats["transformations"]["Loop to Comprehension"] == 1
 
 def test_feedback_handling():
     assert telemetry.add_feedback("some_scan_id", "correct", "Very good detection") is True

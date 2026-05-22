@@ -3,6 +3,7 @@ import secrets
 import hashlib
 import json
 import ast
+import builtins
 
 def get_ast_guard_dir() -> str:
     path = os.path.expanduser("~/.ast-guard")
@@ -45,7 +46,6 @@ def calculate_fingerprint(gen_code: str, gen_metrics: dict) -> str:
             node_types[t_name] = node_types.get(t_name, 0) + 1
             
             if isinstance(node, ast.Name):
-                import builtins
                 if hasattr(builtins, node.id):
                     builtin_names.add(node.id)
     except Exception:

@@ -71,6 +71,6 @@ def print_ansi_report(result: dict) -> None:
 
 def format_json_report(result: dict) -> str:
     """Returns the scan result formatted as a JSON string."""
-    # Build a SARIF-compatible flat structure or output the full scan result dict
-    # To be extremely useful, we serialize the main dict.
+    # Serialize the full scan result dict as formatted JSON.
+    # SARIF output format is planned for v1.1.
     return json.dumps(result, indent=2, sort_keys=True)

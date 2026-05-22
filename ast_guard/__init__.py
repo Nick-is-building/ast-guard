@@ -1,3 +1,6 @@
+__version__ = "1.0.0"
+__all__ = ["scan", "feedback"]
+
 import ast
 from ast_guard.analyzer import extract_metrics
 from ast_guard.allowlist import detect_allowlist_transformations
@@ -81,7 +84,7 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
             else:
                 check_2["status"] = "CLEAN"
                 
-    # 6. Kombinations-Logik
+    # 6. Combination Logic
     # Check 1 WARNING + Check 2 WARNING gleichzeitig = CRITICAL
     kombi_triggered = False
     if check_1["status"] == "WARNING" and check_2["status"] == "WARNING":
