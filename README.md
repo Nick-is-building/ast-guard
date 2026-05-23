@@ -175,6 +175,51 @@ Config hierarchy: CLI args > project config (`.ast-guard.toml`) > user config (`
 
 ---
 
+## MCP Server
+
+ast-guard includes a built-in MCP server for direct integration with Claude Code, Cursor, Codex, and any MCP-compatible agent.
+
+**Install with MCP support:**
+
+```bash
+pip install ast-guard[mcp]
+```
+
+**Configure Claude Code** (`~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "ast-guard": {
+      "command": "ast-guard-mcp",
+      "type": "stdio"
+    }
+  }
+}
+```
+
+**Configure Cursor** (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "ast-guard": {
+      "command": "ast-guard-mcp",
+      "type": "stdio"
+    }
+  }
+}
+```
+
+The MCP server exposes two tools:
+
+- **`ast_guard_scan`** — Compare original vs. generated code. Returns `CLEAN`, `WARNING`, or `CRITICAL` with per-check findings.
+- **`ast_guard_feedback`** — Submit feedback on scan results to improve detection thresholds.
+
+No shell-out, no subprocess. Native MCP tool calls. The base `ast-guard` package remains zero-dependency — `mcp` is only installed when you opt in with `[mcp]`.
+
+---
+
 ## Known Limitations (v1.0)
 
 - **Python only.** Multi-language support (via tree-sitter) planned for v2.0.
@@ -207,8 +252,9 @@ ast-guard/
 │   ├── config.py        # Configuration loading (TOML)
 │   ├── telemetry.py     # Anonymized telemetry system
 │   ├── output.py        # CLI (ANSI) and JSON formatting
-│   └── cli.py           # CLI entry point
-├── tests/               # 35 tests covering all modules
+│   ├── cli.py           # CLI entry point
+│   └── mcp_server.py    # MCP server (optional, install with [mcp])
+├── tests/               # 43 tests covering all modules
 ├── ALLOWLIST.md          # Documented transformation rationales
 ├── CHANGELOG.md
 ├── LICENSE              # MIT
