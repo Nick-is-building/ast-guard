@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = []
 authors = [
-    { name = "Nick", url = "https://github.com/Nick-is-building" }
+    { name = "Nick" }
 ]
 keywords = ["ast", "reward-hacking", "llm", "static-analysis", "code-safety", "ai-safety"]
 classifiers = [
