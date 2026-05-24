@@ -36,6 +36,7 @@ Evaluated against reward hacking patterns from the [TRACE taxonomy](https://arxi
 | Cost per scan | **$0** | $$$ | $$$ |
 
 ast-guard covers 15 of 51 TRACE subcategories — the structural ones (hardcoding, complexity collapse, forbidden calls, obfuscation, import drift). The remaining 36 are semantic, contextual, or runtime-based and require LLM-level understanding. The two approaches are complementary, not competing.
+For the full TRACE subcategory breakdown and coverage analysis, see [benchmarks/](benchmarks/).
 
 ```bash
 # Run the benchmark yourself
