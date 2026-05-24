@@ -4,9 +4,7 @@
 
 Zero dependencies. Pure AST analysis. No LLM needed.
 
-[![Tests](https://github.com/Nick-is-building/ast-guard/actions/workflows/tests.yml/badge.svg)](https://github.com/Nick-is-building/ast-guard/actions/workflows/tests.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://github.com/Nick-is-building/ast-guard/actions/workflows/tests.yml/badge.svg)](https://github.com/Nick-is-building/ast-guard/actions/workflows/tests.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/Nick-is-building/ast-guard/blob/main/LICENSE)
 
 ---
 
@@ -98,6 +96,28 @@ Exit code 0 on CLEAN/WARNING, exit code 1 on CRITICAL. Drop into any pipeline:
 ```bash
 python -m ast_guard.cli check original.py optimized.py --mode strict --json || exit 1
 ```
+
+---
+
+## Examples
+
+The [`examples/`](examples/) directory contains five code pairs demonstrating each detection category:
+
+```bash
+# See hardcoding detection in action
+ast-guard check examples/hardcoding_original.py examples/hardcoding_generated.py --mode strict
+
+# See a legitimate optimization pass cleanly
+ast-guard check examples/optimization_original.py examples/optimization_generated.py --mode strict
+```
+
+| Pair | What It Shows | Result |
+|------|--------------|--------|
+| `hardcoding` | Fibonacci replaced with if/else lookup | **CRITICAL** |
+| `optimization` | Loop → list comprehension (legitimate) | **CLEAN** |
+| `forbidden_calls` | eval/exec injection with obfuscation | **CRITICAL** |
+| `complexity_collapse` | BFS replaced with trivial stub | **CRITICAL** |
+| `import_drift` | pickle/subprocess added to word counter | **CRITICAL** |
 
 ---
 
@@ -257,6 +277,7 @@ allowlist = ["functools", "itertools", "collections", "math"]
 
 [settings]
 mode = "standard"
+telemetry = false  # Disable telemetry entirely
 ```
 
 Config hierarchy: CLI args > project config (`.ast-guard.toml`) > user config (`~/.ast-guard/config.toml`) > defaults.
@@ -317,12 +338,13 @@ ast-guard/
 │   ├── output.py          # CLI (ANSI) and JSON formatting
 │   ├── cli.py             # CLI entry point
 │   └── mcp_server.py      # MCP server (optional: pip install ast-guard[mcp])
-├── benchmarks/            # TRACE-based benchmark suite
-│   ├── run_benchmark.py   # Benchmark runner (CLI + JSON output)
-│   └── samples/           # 30 reward hacking + benign code pairs
+├── benchmarks/            # TRACE-based benchmark suite (30 samples)
+├── examples/              # 5 code pairs demonstrating each check
 ├── tests/                 # 43 tests across all modules
 ├── ALLOWLIST.md           # Documented transformation rationales
 ├── CHANGELOG.md
+├── CONTRIBUTING.md        # Contribution guidelines
+├── SECURITY.md            # Security policy
 ├── LICENSE                # MIT
 ├── pyproject.toml
 └── README.md
@@ -337,6 +359,12 @@ ast-guard/
 - **[SpecBench](https://arxiv.org/abs/2605.21384)** (2026) — Measuring reward hacking in long-horizon coding agents (Codex, Claude Code, OpenCode).
 - **[RHB](https://arxiv.org/abs/2605.02964)** (Thaman, 2026) — Reward Hacking Benchmark for tool-using LLM agents.
 - **[FailProofAI](https://github.com/FailproofAI/failproofai)** — Runtime reliability policies for coding agents. ast-guard provides the complementary code integrity layer.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. The highest-value contributions are new obfuscation bypass patterns and benchmark samples.
 
 ---
 
