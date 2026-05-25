@@ -318,10 +318,8 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 | Version | Feature |
 |---------|---------|
 | v1.1 ✅ | MCP server, TRACE-based benchmark, FailProofAI integration proposal |
-| v1.2 | Constant folding for string concatenation, complexity floor for small functions |
-| v1.3 | SARIF output for GitHub Security Tab and CI/CD |
-| v1.4 | First community-data-driven threshold calibration |
-| v2.0 | Multi-language support via tree-sitter (JavaScript, TypeScript, Go) |
+| v1.2 🔨 | Constant folding for obfuscation detection, complexity floor for small functions, new anti-obfuscation paths (`__builtins__.__dict__`, `getattr(globals())`), set-literal-size allowlist blocker, SARIF v2.1.0 output for GitHub Security Tab |
+| v1.3 | First community-data-driven threshold calibration |
 
 ---
 
