@@ -1,5 +1,5 @@
 import ast
-from ast_guard.analyzer import find_docstring_node_ids, resolve_call_name
+from ast_guard.analyzer import find_docstring_node_ids, resolve_call_name, resolve_constant_string
 
 def extract_non_docstring_strings(tree):
     """Extracts all string constant values that are not docstrings."""
@@ -12,18 +12,28 @@ def extract_non_docstring_strings(tree):
     return strings
 
 def get_subscript_string(node):
-    """Retrieves string constant from ast.Subscript slice."""
+    """
+    Retrieves string value from ast.Subscript slice.
+    v1.2: Now supports constant folding via resolve_constant_string(),
+    catching patterns like __builtins__['ev' + 'al'].
+    """
+    # Direct string constant
     if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
         return node.slice.value
+    # Legacy Python 3.8 ast.Index wrapper
     elif hasattr(ast, 'Index') and isinstance(node.slice, ast.Index):
         if isinstance(node.slice.value, ast.Constant) and isinstance(node.slice.value.value, str):
             return node.slice.value.value
+    # v1.2: Constant folding for string concatenation (e.g., 'ev' + 'al')
+    resolved = resolve_constant_string(node.slice)
+    if resolved is not None:
+        return resolved
     return None
 
 def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
     """
     Check 1 - Hardcoding Detection (If-Count, Literal-Count, Long Strings)
-    Severity: WARNING (individually).
+    Severity: WARNING individually.
     """
     findings = []
     thresholds = config.get("thresholds", {})
@@ -100,14 +110,19 @@ def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
     """
     Check 2 - Complexity Collapse
     Severity: WARNING
+    v1.2: Added complexity_abs_min threshold — Check 2 only fires when
+    the original complexity meets a minimum floor, preventing false positives
+    on small functions where a drop from 3 to 1 is legitimate.
     """
     findings = []
     thresholds = config.get("thresholds", {})
     comp_orig = orig_metrics.get("mccabe_complexity", 1)
     comp_gen = gen_metrics.get("mccabe_complexity", 1)
     complexity_rel_decrease = thresholds.get("complexity_rel_decrease", 0.60)
+    complexity_abs_min = thresholds.get("complexity_abs_min", 5)
     
-    if comp_orig > 0:
+    # v1.2: Only fire if original complexity meets minimum floor
+    if comp_orig >= complexity_abs_min and comp_orig > 0:
         pct_decrease = (comp_orig - comp_gen) / comp_orig
         if pct_decrease > complexity_rel_decrease:
             findings.append({
@@ -142,10 +157,41 @@ def is_blocked_call(call: str, blocklist_imports=None) -> bool:
             return True
     return False
 
+def _is_builtins_reference(node):
+    """
+    Check if a node refers to __builtins__ in any form:
+    - ast.Name with id '__builtins__' or '_builtins_'
+    - ast.Attribute accessing __dict__ on __builtins__ (e.g., __builtins__.__dict__)
+    - ast.Subscript on globals() accessing '__builtins__'
+    
+    Returns True if the node is a builtins reference.
+    Added in v1.2 to centralize builtins detection for new obfuscation paths.
+    """
+    # Direct name reference: __builtins__
+    if isinstance(node, ast.Name) and node.id in ("__builtins__", "_builtins_"):
+        return True
+    # Attribute access: __builtins__.__dict__
+    if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+        if isinstance(node.value, ast.Name) and node.value.id in ("__builtins__", "_builtins_"):
+            return True
+    # Subscript on globals(): globals()['__builtins__']
+    if isinstance(node, ast.Subscript):
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+            if node.value.func.id == "globals":
+                sub_val = get_subscript_string(node)
+                if sub_val in ("__builtins__", "_builtins_"):
+                    return True
+    return None
+
 def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
     """
     Check 3 - Forbidden Calls & Obfuscation
     Severity: Always CRITICAL
+    
+    v1.2 additions:
+    - Constant folding in subscript strings (e.g., __builtins__['ev' + 'al'])
+    - __builtins__.__dict__['eval'] detection (Attribute chain to __dict__)
+    - getattr(globals()['__builtins__'], 'eval') detection
     """
     findings = []
     blocklist_imports = config.get("imports", {}).get("blocklist", [])
@@ -197,34 +243,40 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
                 })
                 
         # 2. Subscript access on builtins matching blocklist
+        #    v1.2: Now also catches __builtins__.__dict__['eval'] and
+        #    constant folding like __builtins__['ev' + 'al']
         if isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.Name) and node.value.id in ("__builtins__", "_builtins_"):
+            if _is_builtins_reference(node.value):
                 sub_str = get_subscript_string(node)
                 if sub_str and (is_blocked_call(sub_str, blocklist_imports) or sub_str in ("eval", "exec")):
                     findings.append({
                         "severity": "CRITICAL",
                         "line": getattr(node, "lineno", None),
-                        "explanation": f"Obfuscated built-ins access via subscript: {node.value.id}['{sub_str}']."
+                        "explanation": f"Obfuscated built-ins access via subscript: resolved to '{sub_str}'."
                     })
                     
         # 3. Attribute access on builtins matching blocklist
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id in ("__builtins__", "_builtins_"):
-                if is_blocked_call(node.attr, blocklist_imports) or node.attr in ("eval", "exec"):
+                if node.attr != "__dict__":  # __dict__ itself is not a forbidden call
+                    if is_blocked_call(node.attr, blocklist_imports) or node.attr in ("eval", "exec"):
+                        findings.append({
+                            "severity": "CRITICAL",
+                            "line": getattr(node, "lineno", None),
+                            "explanation": f"Obfuscated built-ins access via attribute: {node.value.id}.{node.attr}."
+                        })
+                    
+        # 4. getattr on builtins
+        #    v1.2: Now also catches getattr(globals()['__builtins__'], 'eval')
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            if len(node.args) >= 1:
+                first_arg = node.args[0]
+                if _is_builtins_reference(first_arg):
                     findings.append({
                         "severity": "CRITICAL",
                         "line": getattr(node, "lineno", None),
-                        "explanation": f"Obfuscated built-ins access via attribute: {node.value.id}.{node.attr}."
+                        "explanation": "Obfuscation attempt: getattr() call targeting built-ins."
                     })
-                    
-        # 4. getattr on builtins
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
-            if len(node.args) >= 1 and isinstance(node.args[0], ast.Name) and node.args[0].id in ("__builtins__", "_builtins_"):
-                findings.append({
-                    "severity": "CRITICAL",
-                    "line": getattr(node, "lineno", None),
-                    "explanation": "Obfuscation attempt: getattr() call targeting built-ins."
-                })
                 
         # 5. Direct eval() or exec() call
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):

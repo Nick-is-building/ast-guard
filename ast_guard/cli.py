@@ -2,7 +2,7 @@ import argparse
 import sys
 import os
 from ast_guard import scan, feedback
-from ast_guard.output import print_ansi_report, format_json_report
+from ast_guard.output import print_ansi_report, format_json_report, format_sarif_report
 from ast_guard.telemetry import export_telemetry, get_stats, check_sharing_prompt, disable_sharing_prompt
 
 BOLD = "\033[1m"
@@ -11,7 +11,7 @@ UNDERLINE = "\033[4m"
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ast-guard v1.0 - Deterministic reward hacking detector for LLM-generated Python code."
+        description="ast-guard v1.2 - Deterministic reward hacking detector for LLM-generated Python code."
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
     
@@ -21,6 +21,7 @@ def main():
     check_parser.add_argument("generated", help="Path to the generated/optimized code (.py)")
     check_parser.add_argument("--mode", choices=["strict", "standard", "audit"], help="Sensitivity Mode (CLI-Default: standard, API-Default: strict)")
     check_parser.add_argument("--json", action="store_true", help="Output the analysis report in JSON format")
+    check_parser.add_argument("--sarif", action="store_true", help="Output the analysis report in SARIF v2.1.0 format for GitHub Security Tab")
     check_parser.add_argument("--no-telemetry", action="store_true", help="Disables local telemetry logging")
     
     # 2. feedback
@@ -66,14 +67,16 @@ def main():
         result = scan(orig_code, gen_code, mode=mode_val, telemetry_enabled=telemetry_enabled)
         
         # Format and output results
-        if args.json:
+        if args.sarif:
+            print(format_sarif_report(result, original_file=args.original, generated_file=args.generated))
+        elif args.json:
             print(format_json_report(result))
         else:
             if mode_val != "audit":
                 print_ansi_report(result)
                 
         # Handle Sharing Prompt
-        if not args.json and mode_val != "audit" and telemetry_enabled:
+        if not args.json and not args.sarif and mode_val != "audit" and telemetry_enabled:
             should_prompt, count = check_sharing_prompt()
             if should_prompt:
                 print(f"\033[94m{BOLD}[INFO]{RESET} You have completed {count} scans with ast-guard!")

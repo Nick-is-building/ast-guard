@@ -8,6 +8,50 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 UNDERLINE = "\033[4m"
 
+# SARIF severity mapping
+_SARIF_LEVEL_MAP = {
+    "CRITICAL": "error",
+    "WARNING": "warning",
+    "CLEAN": "note"
+}
+
+# SARIF rule definitions for ast-guard checks
+_SARIF_RULES = [
+    {
+        "id": "ast-guard/check-1-hardcoding",
+        "name": "HardcodingDetection",
+        "shortDescription": {"text": "Detects hardcoded outputs replacing algorithmic solutions"},
+        "helpUri": "https://github.com/Nick-is-building/ast-guard#check-1--hardcoding-detection"
+    },
+    {
+        "id": "ast-guard/check-2-complexity-collapse",
+        "name": "ComplexityCollapse",
+        "shortDescription": {"text": "Detects suspicious drops in cyclomatic complexity"},
+        "helpUri": "https://github.com/Nick-is-building/ast-guard#check-2--complexity-collapse"
+    },
+    {
+        "id": "ast-guard/check-3-forbidden-calls",
+        "name": "ForbiddenCallsAndObfuscation",
+        "shortDescription": {"text": "Detects forbidden system calls and obfuscation patterns"},
+        "helpUri": "https://github.com/Nick-is-building/ast-guard#check-3--forbidden-calls--obfuscation"
+    },
+    {
+        "id": "ast-guard/check-4-import-drift",
+        "name": "ImportDrift",
+        "shortDescription": {"text": "Detects new imports not present in the original code"},
+        "helpUri": "https://github.com/Nick-is-building/ast-guard#check-4--import-drift"
+    }
+]
+
+# Map check keys to SARIF rule IDs
+_CHECK_KEY_TO_RULE = {
+    "check_1_hardcoding": "ast-guard/check-1-hardcoding",
+    "check_2_complexity_collapse": "ast-guard/check-2-complexity-collapse",
+    "check_3_forbidden_calls": "ast-guard/check-3-forbidden-calls",
+    "check_4_import_drift": "ast-guard/check-4-import-drift"
+}
+
+
 def print_ansi_report(result: dict) -> None:
     """Prints a beautiful, human-readable report with ANSI colors."""
     verdict = result["verdict"]
@@ -24,7 +68,7 @@ def print_ansi_report(result: dict) -> None:
     else:
         v_color = GREEN
         
-    print(f"\n{BOLD}{UNDERLINE}AST-GUARD v1.0 ANALYSIS REPORT{RESET}")
+    print(f"\n{BOLD}{UNDERLINE}AST-GUARD v1.2 ANALYSIS REPORT{RESET}")
     print(f"{BOLD}Verdict:{RESET} {v_color}{BOLD}{verdict}{RESET}")
     print(f"{BOLD}Sensitivity Mode:{RESET} {mode.upper()}")
     print(f"{BOLD}Scan ID:{RESET} {scan_id}")
@@ -71,6 +115,73 @@ def print_ansi_report(result: dict) -> None:
 
 def format_json_report(result: dict) -> str:
     """Returns the scan result formatted as a JSON string."""
-    # Serialize the full scan result dict as formatted JSON.
-    # SARIF output format is planned for v1.1.
     return json.dumps(result, indent=2, sort_keys=True)
+
+def format_sarif_report(result: dict, original_file: str = "original.py", generated_file: str = "generated.py") -> str:
+    """
+    Formats scan results as SARIF v2.1.0 for GitHub Security Tab and CI/CD integration.
+    
+    The output follows the SARIF v2.1.0 specification (OASIS standard) and is compatible
+    with GitHub's code scanning API (github/codeql-action/upload-sarif).
+    
+    Args:
+        result: The scan result dictionary from ast_guard.scan().
+        original_file: Path to the original file (for SARIF artifact reference).
+        generated_file: Path to the generated file (findings are reported against this).
+        
+    Returns:
+        A JSON string containing the SARIF report.
+        
+    Added in v1.2.
+    """
+    results = []
+    checks = result.get("checks", {})
+    
+    for check_key, check_data in checks.items():
+        rule_id = _CHECK_KEY_TO_RULE.get(check_key, check_key)
+        
+        for finding in check_data.get("findings", []):
+            sarif_result = {
+                "ruleId": rule_id,
+                "level": _SARIF_LEVEL_MAP.get(finding["severity"], "warning"),
+                "message": {
+                    "text": finding["explanation"]
+                },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": generated_file
+                        }
+                    }
+                }]
+            }
+            
+            # Add line number if available
+            if finding.get("line") is not None:
+                sarif_result["locations"][0]["physicalLocation"]["region"] = {
+                    "startLine": finding["line"]
+                }
+                
+            results.append(sarif_result)
+    
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "ast-guard",
+                    "version": "1.2.0",
+                    "informationUri": "https://github.com/Nick-is-building/ast-guard",
+                    "rules": _SARIF_RULES
+                }
+            },
+            "results": results,
+            "artifacts": [
+                {"location": {"uri": original_file}},
+                {"location": {"uri": generated_file}}
+            ]
+        }]
+    }
+    
+    return json.dumps(sarif, indent=2)

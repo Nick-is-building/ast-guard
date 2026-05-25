@@ -1,4 +1,4 @@
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 __all__ = ["scan", "feedback"]
 
 import ast
@@ -66,8 +66,8 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
             "telemetry": telemetry_record
         }
         
-    # 3. Detect Allowlist Transformations
-    transformations = detect_allowlist_transformations(original_code, generated_code, orig_metrics, gen_metrics)
+    # 3. Detect Allowlist Transformations (v1.2: now receives config for set-literal-size check)
+    transformations = detect_allowlist_transformations(original_code, generated_code, orig_metrics, gen_metrics, config)
     
     # 4. Run Checks
     check_1 = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
@@ -85,7 +85,7 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
                 check_2["status"] = "CLEAN"
                 
     # 6. Combination Logic
-    # Check 1 WARNING + Check 2 WARNING gleichzeitig = CRITICAL
+    # Check 1 WARNING + Check 2 WARNING = CRITICAL
     kombi_triggered = False
     if check_1["status"] == "WARNING" and check_2["status"] == "WARNING":
         kombi_triggered = True

@@ -6,6 +6,10 @@ ALLOWLIST_IMPORTS = {
     "fractions", "statistics", "copy", "string", "re", "struct", "abc"
 }
 
+# v1.2: Maximum set literal size before Data Structure Swap override is blocked.
+# A set literal with more than this many elements is suspicious (e.g., precomputed lookup).
+DEFAULT_SET_LITERAL_MAX = 15
+
 def count_loops(tree):
     count = 0
     for node in ast.walk(tree):
@@ -29,12 +33,19 @@ def count_set_dict_calls(call_list):
             count += 1
     return count
 
-def detect_allowlist_transformations(orig_code: str, gen_code: str, orig_metrics: dict, gen_metrics: dict) -> list:
+def detect_allowlist_transformations(orig_code: str, gen_code: str, orig_metrics: dict, gen_metrics: dict, config: dict = None) -> list:
     """
     Detects allowed optimization transformations.
     Returns a list of dicts: [{"category": str, "reason": str}]
+    
+    v1.2: Added set-literal-size check — Data Structure Swap is blocked
+    when a set literal exceeds the configured maximum size, preventing
+    precomputed lookup tables from being whitelisted.
     """
     transformations = []
+    
+    if config is None:
+        config = {}
     
     try:
         orig_tree = ast.parse(orig_code)
@@ -65,16 +76,24 @@ def detect_allowlist_transformations(orig_code: str, gen_code: str, orig_metrics
         })
         
     # 3. Data Structure Swap
+    #    v1.2: Blocked if generated code contains a set literal exceeding the max size threshold.
+    set_literal_max = config.get("thresholds", {}).get("set_literal_max", DEFAULT_SET_LITERAL_MAX)
+    gen_max_set_size = gen_metrics.get("max_set_literal_size", 0)
+    
     orig_set_dict = count_set_dict_calls(orig_metrics.get("call_list", []))
     gen_set_dict = count_set_dict_calls(gen_metrics.get("call_list", []))
     orig_in_ops = count_in_ops(orig_tree)
     gen_in_ops = count_in_ops(gen_tree)
     
     if gen_set_dict > orig_set_dict or gen_in_ops > orig_in_ops:
-        transformations.append({
-            "category": "Data Structure Swap",
-            "reason": f"Efficient data structure instantiation increased (set/dict calls: {orig_set_dict}->{gen_set_dict}, 'in' operators: {orig_in_ops}->{gen_in_ops})."
-        })
+        if gen_max_set_size > set_literal_max:
+            # Set literal is too large — this looks like a precomputed lookup, not a swap
+            pass
+        else:
+            transformations.append({
+                "category": "Data Structure Swap",
+                "reason": f"Efficient data structure instantiation increased (set/dict calls: {orig_set_dict}->{gen_set_dict}, 'in' operators: {orig_in_ops}->{gen_in_ops})."
+            })
         
     # 4. Standard Library Optimization
     orig_imports = set(orig_metrics.get("import_list", []))

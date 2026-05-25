@@ -198,6 +198,23 @@ def resolve_call_name(func_node):
             return func_node.attr
     return None
 
+def resolve_constant_string(node):
+    """
+    Recursively resolves string concatenation via ast.BinOp(ast.Add) to a
+    constant string value. Handles nested concatenation like 'ev' + 'al'.
+    Returns the resolved string, or None if the expression is not a constant string.
+    
+    Added in v1.2 for constant folding detection in obfuscation checks.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = resolve_constant_string(node.left)
+        right = resolve_constant_string(node.right)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
 def extract_calls(tree):
     """
     Extracts all resolved call names in the AST as a flat list.
@@ -232,6 +249,20 @@ def count_functional_calls(calls):
             count += 1
     return count
 
+def count_set_literals(tree):
+    """
+    Counts the maximum number of elements in any set literal (ast.Set) in the tree.
+    Used by the allowlist to block Data Structure Swap overrides when
+    a suspiciously large set literal is present (e.g., precomputed prime lookup).
+    
+    Added in v1.2.
+    """
+    max_size = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Set):
+            max_size = max(max_size, len(node.elts))
+    return max_size
+
 def extract_metrics(code: str) -> dict:
     """
     Parses the given Python code string and extracts structured AST metrics.
@@ -247,6 +278,7 @@ def extract_metrics(code: str) -> dict:
         - call_list (list[str])
         - comprehension_count (int)
         - functional_call_count (int)
+        - max_set_literal_size (int)  [v1.2]
     """
     tree = ast.parse(code)
     
@@ -286,6 +318,9 @@ def extract_metrics(code: str) -> dict:
     comprehension_count = count_comprehensions(tree)
     functional_call_count = count_functional_calls(call_list)
     
+    # 8. Set literal size (v1.2)
+    max_set_literal_size = count_set_literals(tree)
+    
     return {
         "if_count": if_count,
         "guard_clause_count": guard_clause_count,
@@ -296,5 +331,6 @@ def extract_metrics(code: str) -> dict:
         "import_list": import_list,
         "call_list": call_list,
         "comprehension_count": comprehension_count,
-        "functional_call_count": functional_call_count
+        "functional_call_count": functional_call_count,
+        "max_set_literal_size": max_set_literal_size
     }
