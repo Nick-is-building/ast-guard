@@ -318,7 +318,7 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 | Version | Feature |
 |---------|---------|
 | v1.1 ✅ | MCP server, TRACE-based benchmark, FailProofAI integration proposal |
-| v1.2 🔨 | Constant folding for obfuscation detection, complexity floor for small functions, new anti-obfuscation paths (`__builtins__.__dict__`, `getattr(globals())`), set-literal-size allowlist blocker, SARIF v2.1.0 output for GitHub Security Tab |
+| v1.2 ✅ | Constant folding for obfuscation detection, complexity floor for small functions, new anti-obfuscation paths (`__builtins__.__dict__`, `getattr(globals())`), set-literal-size allowlist blocker, SARIF v2.1.0 output for GitHub Security Tab |
 | v1.3 | First community-data-driven threshold calibration |
 
 ---
