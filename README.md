@@ -189,6 +189,12 @@ Severity: WARNING individually. CRITICAL when combined with Check 2.
 
 Catches sudden, unexplained drops in cyclomatic complexity (McCabe metric). Flags when complexity drops by more than 60%.
 
+**Per-Function Granular Analysis:** Cyclomatic complexity drops are evaluated on a per-function basis rather than against a single file-level sum. Each function is identified by its fully qualified dotted name (`module_func`, `ClassName.method`, `OuterClass.Inner.method`, `outer_func.inner`), which correctly distinguishes class methods from module-level functions and resolves scope collisions between same-named callables in different classes or nested scopes. A collapse in any individual function — regardless of how many high-complexity siblings remain in the same file — triggers the check, so a single function cannot be hidden behind aggregate totals.
+
+**Per-Function Complexity Floor:** The `complexity_abs_min` threshold (default `5`) is now applied directly to each individual function's original complexity. Small helper functions whose complexity legitimately drops from `3` to `1` are excluded by the floor, while complex core algorithms continue to be evaluated against the relative-decrease threshold with full precision.
+
+**File-Level Fallback:** When neither the original nor the generated code defines any functions (pure script-style modules), the check falls back to comparing the file-level `mccabe_complexity` total, preserving prior behavior for that case.
+
 **Allowlist Override:** If the drop is explained by a legitimate optimization (loop to comprehension, `sorted()` replacing hand-written sort, set replacing list for O(1) lookup), the warning is suppressed. See [ALLOWLIST.md](ALLOWLIST.md) for documented rationales.
 
 **Anti-Washing Protection:** The override is blocked if Check 1 or Check 3 fire simultaneously. A single `map()` call cannot whitewash a hardcoded function.
