@@ -196,13 +196,32 @@ def test_sarif_output_structure():
     result = scan("x = 1", "eval('1+1')", mode="strict", telemetry_enabled=False)
     sarif_str = format_sarif_report(result)
     sarif = json.loads(sarif_str)
-    
+
     assert sarif["version"] == "2.1.0"
     assert "$schema" in sarif
     assert len(sarif["runs"]) == 1
     assert sarif["runs"][0]["tool"]["driver"]["name"] == "ast-guard"
     assert sarif["runs"][0]["tool"]["driver"]["version"] == "1.2.0"
     assert len(sarif["runs"][0]["tool"]["driver"]["rules"]) == 4
+
+    # partialFingerprints must be present on every result and stable across runs
+    # (independent of line numbers, which shift between commits).
+    results = sarif["runs"][0]["results"]
+    assert len(results) > 0
+    for r in results:
+        assert "partialFingerprints" in r
+        fps = r["partialFingerprints"]
+        assert "astGuardFingerprint/v1" in fps
+        assert isinstance(fps["astGuardFingerprint/v1"], str)
+        assert len(fps["astGuardFingerprint/v1"]) > 0
+
+    # Stability: a second scan produces the same fingerprints.
+    sarif2 = json.loads(format_sarif_report(
+        scan("x = 1", "eval('1+1')", mode="strict", telemetry_enabled=False)
+    ))
+    fps1 = [r["partialFingerprints"]["astGuardFingerprint/v1"] for r in results]
+    fps2 = [r["partialFingerprints"]["astGuardFingerprint/v1"] for r in sarif2["runs"][0]["results"]]
+    assert fps1 == fps2
 
 def test_sarif_output_contains_findings():
     """SARIF results include findings from the scan."""

@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 # ANSI Escape Sequences
@@ -141,11 +142,20 @@ def format_sarif_report(result: dict, original_file: str = "original.py", genera
         rule_id = _CHECK_KEY_TO_RULE.get(check_key, check_key)
         
         for finding in check_data.get("findings", []):
+            # Stable fingerprint over ruleId + explanation only — line numbers
+            # shift between commits, so excluding them lets SARIF consumers
+            # (e.g. GitHub code scanning) deduplicate findings across runs.
+            fingerprint_input = f"{rule_id}|{finding['explanation']}".encode("utf-8")
+            fingerprint = hashlib.sha256(fingerprint_input).hexdigest()[:16]
+
             sarif_result = {
                 "ruleId": rule_id,
                 "level": _SARIF_LEVEL_MAP.get(finding["severity"], "warning"),
                 "message": {
                     "text": finding["explanation"]
+                },
+                "partialFingerprints": {
+                    "astGuardFingerprint/v1": fingerprint
                 },
                 "locations": [{
                     "physicalLocation": {
