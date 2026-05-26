@@ -263,6 +263,52 @@ def count_set_literals(tree):
             max_size = max(max_size, len(node.elts))
     return max_size
 
+def collect_function_complexities(tree):
+    """
+    Walks the AST and returns a dict mapping qualified function names to their
+    individual McCabe complexity scores. Qualified names use dotted paths to
+    avoid collisions between functions of the same name in different scopes:
+
+      - Module-level function `foo`           -> "foo"
+      - Method `bar` of class `C`             -> "C.bar"
+      - Method `bar` of nested class `C.Inner`-> "C.Inner.bar"
+      - Nested function `inner` inside `foo`  -> "foo.inner"
+
+    If two functions still collide on their qualified name (e.g. two functions
+    with identical full paths defined in different branches of the same scope),
+    later occurrences are disambiguated with a numeric suffix like "name#2".
+
+    Each value is computed via `calculate_node_complexity`, which already skips
+    nested functions/classes so each score reflects only that node's own
+    control flow.
+    """
+    complexities = {}
+
+    def visit(node, prefix):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            qname = f"{prefix}.{node.name}" if prefix else node.name
+            key = qname
+            if key in complexities:
+                # Disambiguate duplicate qualified names (rare; e.g. duplicate
+                # defs in if/else branches at the same scope).
+                i = 2
+                while f"{qname}#{i}" in complexities:
+                    i += 1
+                key = f"{qname}#{i}"
+            complexities[key] = calculate_node_complexity(node)
+            child_prefix = qname
+        elif isinstance(node, ast.ClassDef):
+            child_prefix = f"{prefix}.{node.name}" if prefix else node.name
+        else:
+            child_prefix = prefix
+
+        for child in ast.iter_child_nodes(node):
+            visit(child, child_prefix)
+
+    visit(tree, "")
+    return complexities
+
+
 def extract_metrics(code: str) -> dict:
     """
     Parses the given Python code string and extracts structured AST metrics.
@@ -279,6 +325,7 @@ def extract_metrics(code: str) -> dict:
         - comprehension_count (int)
         - functional_call_count (int)
         - max_set_literal_size (int)  [v1.2]
+        - function_complexities (dict[str, int])  [v1.3] per-function McCabe complexity
     """
     tree = ast.parse(code)
     
@@ -320,7 +367,10 @@ def extract_metrics(code: str) -> dict:
     
     # 8. Set literal size (v1.2)
     max_set_literal_size = count_set_literals(tree)
-    
+
+    # 9. Per-function McCabe complexity, keyed by qualified name
+    function_complexities = collect_function_complexities(tree)
+
     return {
         "if_count": if_count,
         "guard_clause_count": guard_clause_count,
@@ -332,5 +382,6 @@ def extract_metrics(code: str) -> dict:
         "call_list": call_list,
         "comprehension_count": comprehension_count,
         "functional_call_count": functional_call_count,
-        "max_set_literal_size": max_set_literal_size
+        "max_set_literal_size": max_set_literal_size,
+        "function_complexities": function_complexities,
     }

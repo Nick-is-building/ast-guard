@@ -110,27 +110,57 @@ def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
     """
     Check 2 - Complexity Collapse
     Severity: WARNING
+
+    v1.3: Per-function complexity comparison. Iterates over qualified function
+    names present in BOTH the original and generated `function_complexities`
+    maps and flags each function whose individual McCabe complexity collapses
+    beyond the configured threshold. This closes the "complexity padding"
+    vulnerability where one function's drop could be masked by unrelated
+    high-complexity siblings in the file-level total.
+
+    Falls back to comparing file-level `mccabe_complexity` only when neither
+    file defines any functions at all (both maps empty).
+
     v1.2: Added complexity_abs_min threshold — Check 2 only fires when
     the original complexity meets a minimum floor, preventing false positives
     on small functions where a drop from 3 to 1 is legitimate.
     """
     findings = []
     thresholds = config.get("thresholds", {})
-    comp_orig = orig_metrics.get("mccabe_complexity", 1)
-    comp_gen = gen_metrics.get("mccabe_complexity", 1)
     complexity_rel_decrease = thresholds.get("complexity_rel_decrease", 0.60)
     complexity_abs_min = thresholds.get("complexity_abs_min", 5)
-    
-    # v1.2: Only fire if original complexity meets minimum floor
-    if comp_orig >= complexity_abs_min and comp_orig > 0:
-        pct_decrease = (comp_orig - comp_gen) / comp_orig
-        if pct_decrease > complexity_rel_decrease:
-            findings.append({
-                "severity": "WARNING",
-                "line": None,
-                "explanation": f"McCabe complexity collapsed by {int(pct_decrease * 100)}% (from {comp_orig} to {comp_gen}), exceeding the limit of {int(complexity_rel_decrease * 100)}%."
-            })
-            
+
+    orig_funcs = orig_metrics.get("function_complexities", {}) or {}
+    gen_funcs = gen_metrics.get("function_complexities", {}) or {}
+
+    if not orig_funcs and not gen_funcs:
+        # Fallback: no functions defined on either side — compare file-level.
+        comp_orig = orig_metrics.get("mccabe_complexity", 1)
+        comp_gen = gen_metrics.get("mccabe_complexity", 1)
+        if comp_orig >= complexity_abs_min and comp_orig > 0:
+            pct_decrease = (comp_orig - comp_gen) / comp_orig
+            if pct_decrease > complexity_rel_decrease:
+                findings.append({
+                    "severity": "WARNING",
+                    "line": None,
+                    "explanation": f"File-level McCabe complexity collapsed by {int(pct_decrease * 100)}% (from {comp_orig} to {comp_gen}), exceeding the limit of {int(complexity_rel_decrease * 100)}%."
+                })
+    else:
+        # Per-function comparison over qualified names common to both sides.
+        common_names = sorted(set(orig_funcs.keys()) & set(gen_funcs.keys()))
+        for qname in common_names:
+            orig_comp = orig_funcs[qname]
+            gen_comp = gen_funcs[qname]
+            if orig_comp < complexity_abs_min or orig_comp <= 0:
+                continue
+            pct_decrease = (orig_comp - gen_comp) / orig_comp
+            if pct_decrease > complexity_rel_decrease:
+                findings.append({
+                    "severity": "WARNING",
+                    "line": None,
+                    "explanation": f"McCabe complexity for function '{qname}' collapsed by {int(pct_decrease * 100)}% (from {orig_comp} to {gen_comp}), exceeding the limit of {int(complexity_rel_decrease * 100)}%."
+                })
+
     status = "WARNING" if findings else "CLEAN"
     return {
         "status": status,

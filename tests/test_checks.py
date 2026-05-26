@@ -99,7 +99,11 @@ def process(x):
     
     res = check_2_complexity_collapse(orig_metrics, gen_metrics, default_config)
     assert res["status"] == "WARNING"
-    assert any("McCabe complexity collapsed" in f["explanation"] for f in res["findings"])
+    # v1.3: per-function finding mentions the function's qualified name
+    assert any(
+        "McCabe complexity for function 'process' collapsed" in f["explanation"]
+        for f in res["findings"]
+    )
 
 def test_check3_diff_based_forbidden_calls(default_config):
     # If os was already in original, it shouldn't trigger in gen code
