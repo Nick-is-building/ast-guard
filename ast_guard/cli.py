@@ -86,7 +86,7 @@ def _print_detailed_stats(detailed: dict) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ast-guard v1.2 - Deterministic reward hacking detector for LLM-generated Python code."
+        description="ast-guard v1.3 - Deterministic reward hacking detector for LLM-generated Python code."
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
     

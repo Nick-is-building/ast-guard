@@ -1,5 +1,35 @@
 # CHANGELOG.md - ast-guard
 
+## [1.3.0] - 2026-05-28
+
+### Added
+- **Check 5 — Extensional Enumeration Detector**: Detects the "enumerate all known input/output pairs" failure mode of RLVR-trained LLMs documented by Helff et al., "LLMs Gaming Verifiers" ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)). Per generated function, fires WARNING when `total_ifs >= enumeration_min_ifs` (default 5), `enumeration_ifs / total_ifs >= enumeration_ratio` (default 0.70), and `loop_count <= 1`. Recognizes both `if`/`elif` chains and `match`/`case` blocks.
+- **`count_enumeration_pattern(tree)` in `analyzer.py`**: Per-function analysis emitting `{name, enumeration_ifs, total_ifs, loop_count}`. Included in `extract_metrics()` as `enumeration_analysis`. Skips nested functions/classes (each is reported separately).
+- **Combination Logic Extensions**:
+  - Check 5 WARNING + Check 2 WARNING escalates to **CRITICAL** (enumeration + complexity collapse).
+  - Check 5 WARNING + Check 1 WARNING escalates to **CRITICAL** (enumeration + hardcoding; covers the case where Check 2 misses because the original was too small).
+  - Check 5 also blocks the Allowlist override of Check 2 (alongside Check 1 and Check 3).
+- **SARIF Rule for Check 5**: `ast-guard/check-5-extensional-enumeration` added to the SARIF v2.1.0 output and `_CHECK_KEY_TO_RULE` mapping.
+- **Detailed Telemetry Statistics (`get_detailed_stats()` in `telemetry.py`)**: Computes metric deltas (gen − orig) for `if_count`, `literal_count`, `mccabe_complexity`, `comprehension_count`, `functional_call_count`, `long_string_count` with count/mean/median/min/max/stddev; check correlations (Check 1+2 kombi, Check 5+2 kombi, Check 5 alone vs. with others, Check 3/4 CRITICAL counts); verdicts split by sensitivity mode; transformations with percentages. Standard library only (`statistics` module).
+- **CLI flags `--detailed` and `--export-stats <path>` on `stats` subcommand**: Print or export the detailed statistics as JSON for external visualization.
+- **GitHub Composite Action (`.github/actions/ast-guard/action.yml`)**: Reusable action with SARIF output, optional upload to GitHub Security Tab via `github/codeql-action/upload-sarif`, configurable `mode`, `sarif-file`, and `category` inputs.
+- **Benchmark Samples for Extensional Enumeration**:
+  - `pure_enumeration_no_fallback` — `collatz_steps(n)` as 15 individual `if n == X: return Y` without algorithmic fallback.
+  - `match_case_enumeration` — `digit_name(n)` as a `match`/`case 0..9` block against a dict-lookup original.
+  - `http_status_dispatch` (benign) — many `elif status_code == ...` branches with complex bodies (3+ statements) to verify Check 5 does not fire on real dispatch logic.
+- **Config Thresholds**: `enumeration_ratio` (0.70) and `enumeration_min_ifs` (5) added to `DEFAULT_CONFIG` and CLI threshold mapping.
+- **Test Coverage**: `tests/test_check5.py` with unit tests for `count_enumeration_pattern`, two true positives (Fibonacci if/elif chain, match/case lookup), three true negatives (complex bodies, too few ifs, multiple loops), and integration tests for both kombi rules.
+
+### Fixed
+- **Check 2 Rename Bypass**: When original and generated both define functions but share no qualified names (e.g. `factorial` renamed to `fact`), Check 2 previously returned silently CLEAN. Now falls back to file-level `mccabe_complexity` comparison with the same thresholds, citing "No matching function names found between original and generated code; falling back to file-level comparison."
+- **`builtins.eval(...)` Detection Gap**: `_is_builtins_reference()` and the parallel attribute-path check now include `"builtins"` (the regular module) alongside `"__builtins__"` and `"_builtins_"`. Closes the silent bypass that occurred when `import builtins` was already present in the original code and `builtins.eval(...)` therefore did not appear as a "new" call.
+- **Syntax-Error Telemetry Data Corruption**: In the `gen_code` parse-failure path, `log_scan` was called with `orig_metrics` twice (in place of `gen_metrics`), polluting the local telemetry log with the false claim that the generated code matched the original. Now passes an empty dict for `gen_metrics`.
+- **Overly Broad Exception Handling**: Both `ast.parse` / `extract_metrics` blocks in `scan()` now use `except SyntaxError` instead of `except Exception`. Real analyzer bugs (KeyError, AttributeError, …) propagate instead of being silently masked as if the input were unparseable.
+
+### Changed
+- `__version__` bumped to `1.3.0` across `__init__.py`, `pyproject.toml`, `cli.py` description, `output.py` ANSI header and SARIF tool version.
+- ANSI report header now reads `AST-GUARD v1.3 ANALYSIS REPORT`.
+
 ## [1.2.0] - 2026-05-26
 
 ### Added

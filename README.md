@@ -28,14 +28,14 @@ Evaluated against reward hacking patterns from the [TRACE taxonomy](https://arxi
 
 | Metric | ast-guard | GPT-5.2 (high reasoning) | Claude Opus 4.5 |
 |--------|-----------|--------------------------|-----------------|
-| Detection Rate | **90.9%** (structural categories) | 63% (all categories) | 25% (all categories) |
+| Detection Rate | **91.7%** (structural categories) | 63% (all categories) | 25% (all categories) |
 | Precision | **100%** | Not reported | Not reported |
 | False Positive Rate | **0%** | Not reported | Not reported |
 | Deterministic | **Yes** | No | No |
 | Latency | **<50ms** | ~10s | ~10s |
 | Cost per scan | **$0** | $$$ | $$$ |
 
-ast-guard covers 15 of 51 TRACE subcategories — the structural ones (hardcoding, complexity collapse, forbidden calls, obfuscation, import drift). The remaining 36 are semantic, contextual, or runtime-based and require LLM-level understanding. The two approaches are complementary, not competing.
+The current benchmark suite has 24 hacked samples and 9 benign samples spanning 16 subcategories (15 from TRACE plus one from Helff et al.'s "LLMs Gaming Verifiers", arXiv:2604.15149, exercising Check 5). ast-guard covers 15 of 51 TRACE subcategories — the structural ones (hardcoding, complexity collapse, forbidden calls, obfuscation, import drift, extensional enumeration). The remaining 36 TRACE categories are semantic, contextual, or runtime-based and require LLM-level understanding. The two approaches are complementary, not competing.
 For the full TRACE subcategory breakdown and coverage analysis, see [benchmarks/](benchmarks/).
 
 ```bash
@@ -53,7 +53,7 @@ python -m benchmarks.run_benchmark --json
 ```bash
 git clone https://github.com/Nick-is-building/ast-guard.git
 cd ast-guard
-python -m pytest tests/ -v  # 57 tests across all modules
+python -m pytest tests/ -v  # 70 tests across all modules
 ```
 
 ### CLI
@@ -171,7 +171,46 @@ Works with Claude Code, Cursor, Codex, OpenCode, and any MCP-compatible agent.
 
 ---
 
-## The Four Checks
+## GitHub Action
+
+A reusable composite action is provided at `.github/actions/ast-guard/action.yml`. It installs ast-guard, runs a scan, emits a SARIF v2.1.0 file, and optionally uploads the SARIF to the GitHub Security Tab via `github/codeql-action/upload-sarif`. The action exits non-zero on CRITICAL so it doubles as a CI gate.
+
+```yaml
+# .github/workflows/check.yml
+name: ast-guard
+on: [pull_request]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # required only when upload-sarif is "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ast-guard
+        with:
+          original: path/to/original.py
+          generated: path/to/generated.py
+          mode: strict          # strict | standard | audit (default: strict)
+          upload-sarif: "true"  # default: "false"
+          category: ast-guard   # SARIF category, prevents overwriting other scans
+```
+
+Inputs:
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `original` | yes | — | Path to the original Python file |
+| `generated` | yes | — | Path to the generated/optimized Python file |
+| `mode` | no | `strict` | Sensitivity mode |
+| `sarif-file` | no | `ast-guard-results.sarif` | Path where the SARIF report is written |
+| `upload-sarif` | no | `"false"` | Upload the SARIF to GitHub Security |
+| `category` | no | `ast-guard` | SARIF category passed to `upload-sarif` |
+
+---
+
+## The Five Checks
 
 ### Check 1 — Hardcoding Detection
 
@@ -183,7 +222,7 @@ Catches LLMs that replace algorithms with hardcoded results.
 
 **Long Strings:** Flags new strings over 200 characters — catches compressed lookup data like `"1:1|2:1|3:2|..."`.
 
-Severity: WARNING individually. CRITICAL when combined with Check 2.
+Severity: WARNING individually. CRITICAL when combined with Check 2 or Check 5.
 
 ### Check 2 — Complexity Collapse
 
@@ -197,9 +236,9 @@ Catches sudden, unexplained drops in cyclomatic complexity (McCabe metric). Flag
 
 **Allowlist Override:** If the drop is explained by a legitimate optimization (loop to comprehension, `sorted()` replacing hand-written sort, set replacing list for O(1) lookup), the warning is suppressed. See [ALLOWLIST.md](ALLOWLIST.md) for documented rationales.
 
-**Anti-Washing Protection:** The override is blocked if Check 1 or Check 3 fire simultaneously. A single `map()` call cannot whitewash a hardcoded function.
+**Anti-Washing Protection:** The override is blocked if Check 1, Check 3, or Check 5 fire simultaneously. A single `map()` call cannot whitewash a hardcoded function or a memorized lookup table.
 
-Severity: WARNING individually. CRITICAL when combined with Check 1.
+Severity: WARNING individually. CRITICAL when combined with Check 1 or Check 5.
 
 ### Check 3 — Forbidden Calls & Obfuscation
 
@@ -220,6 +259,20 @@ Catches new imports that weren't in the original code.
 **CLEAN:** `functools`, `itertools`, `collections`, `math`, `typing`, `dataclasses`, `enum`, `copy`, `re`, `bisect`, `heapq`.
 
 **WARNING:** Everything else, for manual review. Both lists are configurable.
+
+### Check 5 — Extensional Enumeration
+
+Catches the "enumerate all known input/output pairs" failure mode observed in RLVR-trained LLMs by Helff et al., *"LLMs Gaming Verifiers"* ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)). When the verifier samples a known input set, the model wins by memorizing every (input, output) pair as a flat `if`/`elif` chain or `match`/`case` block instead of solving the task.
+
+Per generated function, Check 5 fires WARNING when **all three** conditions hold:
+
+- `total_ifs >= enumeration_min_ifs` (default: 5) — enough branches to be a lookup, not a small dispatcher.
+- `enumeration_ifs / total_ifs >= enumeration_ratio` (default: 0.70) — most branches are constant-equality (`if n == 0`, `case 1`) with trivial bodies (≤2 statements).
+- `loop_count <= 1` — the function isn't doing meaningful iteration.
+
+Recognizes both `if`/`elif` chains and `match`/`case` blocks. Skips nested functions and analyzes each function independently.
+
+Severity: WARNING individually. CRITICAL when combined with Check 1 (enumeration + hardcoding) **or** Check 2 (enumeration + complexity collapse). Check 5 also blocks the Check 2 Allowlist override.
 
 ---
 
@@ -256,10 +309,21 @@ ast-guard collects **only anonymized metrics** — never code, filenames, paths,
 - **metrics_fingerprint:** SHA-256 of AST metrics, node type distributions, and builtin names. Enables pattern clustering without exposing code content.
 
 ```bash
-python -m ast_guard.cli stats                          # View local statistics
-python -m ast_guard.cli export --output my_data.jsonl  # Export anonymized data
+python -m ast_guard.cli stats                                  # View local statistics
+python -m ast_guard.cli stats --detailed                       # Metric deltas, check correlations, verdicts by mode
+python -m ast_guard.cli stats --export-stats stats.json        # Export detailed statistics as JSON
+python -m ast_guard.cli export --output my_data.jsonl          # Export anonymized telemetry data
 python -m ast_guard.cli feedback --id <scan-id> --label true_positive
 ```
+
+**Detailed statistics** (`--detailed` / `--export-stats`) summarize, across every scan in the local telemetry log:
+
+- Per-metric deltas (gen − orig) for `if_count`, `literal_count`, `mccabe_complexity`, `comprehension_count`, `functional_call_count`, `long_string_count` — count, mean, median, min, max, stddev.
+- Check correlations: how often Check 1+2 and Check 5+2 kombi-escalate to CRITICAL, how often Check 5 fires alone vs. alongside other checks, per-check CRITICAL counts.
+- Verdict distribution split by sensitivity mode.
+- Transformation frequencies with percentages.
+
+Computed using the Python standard library only (`statistics` module). The JSON export is intended for external visualization and dashboarding.
 
 **Community Dataset:** We are building the first empirical dataset of AST metrics for reward hacking detection. Contributions help calibrate thresholds for everyone. All data is anonymized, scan_ids are stripped on export, and sharing is always opt-in.
 
@@ -277,6 +341,10 @@ literal_count_rel_increase = 2.0
 literal_count_abs_min = 10
 long_string_len = 200
 complexity_rel_decrease = 0.60
+complexity_abs_min = 5
+set_literal_max = 15
+enumeration_ratio = 0.70
+enumeration_min_ifs = 5
 
 [imports]
 blocklist = ["os", "sys", "subprocess", "pickle", "importlib"]
@@ -310,7 +378,7 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 
 ---
 
-## Known Limitations (v1.2)
+## Known Limitations (v1.3)
 
 - **Python only.** Multi-language support (via tree-sitter) planned for v2.0.
 - **No semantic analysis.** ast-guard checks structure, not meaning. Semantically incorrect code is the job of your downstream verifier or test suite.
@@ -325,7 +393,8 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 |---------|---------|
 | v1.1 ✅ | MCP server, TRACE-based benchmark, FailProofAI integration proposal |
 | v1.2 ✅ | Constant folding for obfuscation detection, complexity floor for small functions, new anti-obfuscation paths (`__builtins__.__dict__`, `getattr(globals())`), set-literal-size allowlist blocker, SARIF v2.1.0 output for GitHub Security Tab |
-| v1.3 | First community-data-driven threshold calibration |
+| v1.3 ✅ | Check 5 (Extensional Enumeration, Helff et al. arXiv:2604.15149), Check 5+1 and Check 5+2 kombi escalation, Check 2 rename-bypass fix, `builtins.eval` detection gap closed, reusable GitHub Composite Action, detailed telemetry statistics (`--detailed`, `--export-stats`) |
+| v1.4 | First community-data-driven threshold calibration |
 
 ---
 
@@ -334,18 +403,21 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 ```
 ast-guard/
 ├── ast_guard/
-│   ├── __init__.py        # Public API: scan(), feedback()
+│   ├── __init__.py        # Public API: scan(), feedback(), orchestration
 │   ├── analyzer.py        # AST parsing and metric extraction
-│   ├── checks.py          # The four core checks
+│   ├── checks.py          # The five core checks
 │   ├── allowlist.py       # Legitimate transformation detection
 │   ├── config.py          # Configuration loading (TOML)
-│   ├── telemetry.py       # Anonymized telemetry system
-│   ├── output.py          # CLI (ANSI) and JSON formatting
-│   ├── cli.py             # CLI entry point
+│   ├── telemetry.py       # Anonymized telemetry + detailed statistics
+│   ├── output.py          # CLI (ANSI), JSON, SARIF v2.1.0 formatting
+│   ├── cli.py             # CLI entry point (check, feedback, export, stats)
 │   └── mcp_server.py      # MCP server (optional: pip install ast-guard[mcp])
-├── benchmarks/            # TRACE-based benchmark suite (30 samples)
+├── .github/
+│   ├── actions/ast-guard/ # Reusable composite action with SARIF upload
+│   └── workflows/         # CI workflows
+├── benchmarks/            # TRACE + Helff et al. benchmark suite (33 samples)
 ├── examples/              # 5 code pairs demonstrating each check
-├── tests/                 # 57 tests across all modules
+├── tests/                 # 70 tests across all modules
 ├── ALLOWLIST.md           # Documented transformation rationales
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md        # Contribution guidelines
