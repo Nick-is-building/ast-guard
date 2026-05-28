@@ -201,8 +201,8 @@ def test_sarif_output_structure():
     assert "$schema" in sarif
     assert len(sarif["runs"]) == 1
     assert sarif["runs"][0]["tool"]["driver"]["name"] == "ast-guard"
-    assert sarif["runs"][0]["tool"]["driver"]["version"] == "1.2.0"
-    assert len(sarif["runs"][0]["tool"]["driver"]["rules"]) == 4
+    assert sarif["runs"][0]["tool"]["driver"]["version"] == "1.3.0"
+    assert len(sarif["runs"][0]["tool"]["driver"]["rules"]) == 5
 
     # partialFingerprints must be present on every result and stable across runs
     # (independent of line numbers, which shift between commits).

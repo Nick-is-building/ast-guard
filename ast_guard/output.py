@@ -41,6 +41,12 @@ _SARIF_RULES = [
         "name": "ImportDrift",
         "shortDescription": {"text": "Detects new imports not present in the original code"},
         "helpUri": "https://github.com/Nick-is-building/ast-guard#check-4--import-drift"
+    },
+    {
+        "id": "ast-guard/check-5-extensional-enumeration",
+        "name": "ExtensionalEnumeration",
+        "shortDescription": {"text": "Detects enumeration of constant input/output pairs replacing algorithmic logic"},
+        "helpUri": "https://github.com/Nick-is-building/ast-guard#check-5--extensional-enumeration"
     }
 ]
 
@@ -49,7 +55,8 @@ _CHECK_KEY_TO_RULE = {
     "check_1_hardcoding": "ast-guard/check-1-hardcoding",
     "check_2_complexity_collapse": "ast-guard/check-2-complexity-collapse",
     "check_3_forbidden_calls": "ast-guard/check-3-forbidden-calls",
-    "check_4_import_drift": "ast-guard/check-4-import-drift"
+    "check_4_import_drift": "ast-guard/check-4-import-drift",
+    "check_5_extensional_enumeration": "ast-guard/check-5-extensional-enumeration"
 }
 
 
@@ -69,7 +76,7 @@ def print_ansi_report(result: dict) -> None:
     else:
         v_color = GREEN
         
-    print(f"\n{BOLD}{UNDERLINE}AST-GUARD v1.2 ANALYSIS REPORT{RESET}")
+    print(f"\n{BOLD}{UNDERLINE}AST-GUARD v1.3 ANALYSIS REPORT{RESET}")
     print(f"{BOLD}Verdict:{RESET} {v_color}{BOLD}{verdict}{RESET}")
     print(f"{BOLD}Sensitivity Mode:{RESET} {mode.upper()}")
     print(f"{BOLD}Scan ID:{RESET} {scan_id}")
@@ -181,7 +188,7 @@ def format_sarif_report(result: dict, original_file: str = "original.py", genera
             "tool": {
                 "driver": {
                     "name": "ast-guard",
-                    "version": "1.2.0",
+                    "version": "1.3.0",
                     "informationUri": "https://github.com/Nick-is-building/ast-guard",
                     "rules": _SARIF_RULES
                 }

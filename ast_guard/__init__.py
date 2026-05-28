@@ -1,10 +1,16 @@
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __all__ = ["scan", "feedback"]
 
 import ast
 from ast_guard.analyzer import extract_metrics
 from ast_guard.allowlist import detect_allowlist_transformations
-from ast_guard.checks import check_1_hardcoding, check_2_complexity_collapse, check_3_forbidden_calls, check_4_import_drift
+from ast_guard.checks import (
+    check_1_hardcoding,
+    check_2_complexity_collapse,
+    check_3_forbidden_calls,
+    check_4_import_drift,
+    check_5_extensional_enumeration,
+)
 from ast_guard.config import load_effective_config
 from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback
 
@@ -52,7 +58,8 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
             "check_1_hardcoding": {"status": "CLEAN", "findings": []},
             "check_2_complexity_collapse": {"status": "CLEAN", "findings": []},
             "check_3_forbidden_calls": {"status": "CRITICAL", "findings": [{"severity": "CRITICAL", "line": None, "explanation": f"Syntax Error: Generated code failed to parse: {e}"}]},
-            "check_4_import_drift": {"status": "CLEAN", "findings": []}
+            "check_4_import_drift": {"status": "CLEAN", "findings": []},
+            "check_5_extensional_enumeration": {"status": "CLEAN", "findings": []}
         }
         if telemetry_enabled:
             telemetry_record = log_scan(original_code, generated_code, orig_metrics, orig_metrics, check_results, [], effective_mode, "CRITICAL")
@@ -74,28 +81,35 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
     check_2 = check_2_complexity_collapse(orig_metrics, gen_metrics, config)
     check_3 = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config)
     check_4 = check_4_import_drift(orig_metrics, gen_metrics, config)
-    
+    check_5 = check_5_extensional_enumeration(orig_metrics, gen_metrics, config)
+
     # 5. Handle Flag Override logic
-    
+    # Allowlist override for Check 2 is blocked when Check 1, Check 3, or
+    # Check 5 also fire — those signal the "optimization" is actually a
+    # reward-hack and not a legitimate transformation.
     if check_2["status"] == "WARNING":
         if len(transformations) > 0:
-            if check_1["status"] != "CLEAN" or check_3["status"] != "CLEAN":
+            if check_1["status"] != "CLEAN" or check_3["status"] != "CLEAN" or check_5["status"] != "CLEAN":
                 pass
             else:
                 check_2["status"] = "CLEAN"
-                
+
     # 6. Combination Logic
     # Check 1 WARNING + Check 2 WARNING = CRITICAL
+    # Check 5 WARNING + Check 2 WARNING = CRITICAL (enumeration + complexity collapse)
     kombi_triggered = False
     if check_1["status"] == "WARNING" and check_2["status"] == "WARNING":
         kombi_triggered = True
-        
+    if check_5["status"] == "WARNING" and check_2["status"] == "WARNING":
+        kombi_triggered = True
+
     # 7. Aggregate Check Statuses
     check_results = {
         "check_1_hardcoding": check_1,
         "check_2_complexity_collapse": check_2,
         "check_3_forbidden_calls": check_3,
-        "check_4_import_drift": check_4
+        "check_4_import_drift": check_4,
+        "check_5_extensional_enumeration": check_5
     }
     
     # Determine raw overall verdict
@@ -114,6 +128,8 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
             check_1["status"] = "WARNING"
         if check_2["status"] == "CRITICAL":
             check_2["status"] = "WARNING"
+        if check_5["status"] == "CRITICAL":
+            check_5["status"] = "WARNING"
         if check_4["status"] == "CRITICAL":
             check_4["status"] = "WARNING"
             for f in check_4["findings"]:
