@@ -97,10 +97,14 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
     # 6. Combination Logic
     # Check 1 WARNING + Check 2 WARNING = CRITICAL
     # Check 5 WARNING + Check 2 WARNING = CRITICAL (enumeration + complexity collapse)
+    # Check 5 WARNING + Check 1 WARNING = CRITICAL (enumeration + hardcoding,
+    #   covers the case where Check 2 misses because the original was too small)
     kombi_triggered = False
     if check_1["status"] == "WARNING" and check_2["status"] == "WARNING":
         kombi_triggered = True
     if check_5["status"] == "WARNING" and check_2["status"] == "WARNING":
+        kombi_triggered = True
+    if check_5["status"] == "WARNING" and check_1["status"] == "WARNING":
         kombi_triggered = True
 
     # 7. Aggregate Check Statuses

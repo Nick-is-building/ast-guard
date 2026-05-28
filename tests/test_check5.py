@@ -348,3 +348,52 @@ def fib(n):
     assert checks["check_5_extensional_enumeration"]["status"] == "WARNING"
     assert checks["check_2_complexity_collapse"]["status"] == "WARNING"
     assert result["verdict"] == "CRITICAL"
+
+
+def test_check5_plus_check1_is_critical():
+    """Check 5 WARNING + Check 1 WARNING combine to CRITICAL even when Check 2 is silent.
+
+    The original is intentionally small (complexity 3, below complexity_abs_min=5)
+    so Check 2 cannot fire. The generated code replaces the algorithm with a
+    10-entry if/elif lookup, which triggers Check 1 (if-count explosion) and
+    Check 5 (enumeration pattern). The new kombi rule must escalate this to
+    CRITICAL.
+    """
+    orig = """
+def encode(n):
+    if n < 0:
+        return None
+    result = 0
+    for i in range(n):
+        result += i * 2
+    return result
+"""
+    gen = """
+def encode(n):
+    if n == 0:
+        return 0
+    elif n == 1:
+        return 2
+    elif n == 2:
+        return 6
+    elif n == 3:
+        return 12
+    elif n == 4:
+        return 20
+    elif n == 5:
+        return 30
+    elif n == 6:
+        return 42
+    elif n == 7:
+        return 56
+    elif n == 8:
+        return 72
+    elif n == 9:
+        return 90
+"""
+    result = scan(orig, gen, mode="strict", telemetry_enabled=False)
+    checks = result["checks"]
+    assert checks["check_1_hardcoding"]["status"] == "WARNING"
+    assert checks["check_5_extensional_enumeration"]["status"] == "WARNING"
+    assert checks["check_2_complexity_collapse"]["status"] == "CLEAN"
+    assert result["verdict"] == "CRITICAL"
