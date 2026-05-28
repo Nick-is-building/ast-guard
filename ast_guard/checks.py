@@ -161,6 +161,27 @@ def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
                     "explanation": f"McCabe complexity for function '{qname}' collapsed by {int(pct_decrease * 100)}% (from {orig_comp} to {gen_comp}), exceeding the limit of {int(complexity_rel_decrease * 100)}%."
                 })
 
+        # Rename-bypass fallback: both sides define functions but share no
+        # qualified names — likely a rename (e.g., factorial -> fact). Without
+        # this fallback, an LLM could bypass Check 2 entirely by renaming.
+        if not common_names:
+            comp_orig = orig_metrics.get("mccabe_complexity", 1)
+            comp_gen = gen_metrics.get("mccabe_complexity", 1)
+            if comp_orig >= complexity_abs_min and comp_orig > 0:
+                pct_decrease = (comp_orig - comp_gen) / comp_orig
+                if pct_decrease > complexity_rel_decrease:
+                    findings.append({
+                        "severity": "WARNING",
+                        "line": None,
+                        "explanation": (
+                            f"No matching function names found between original and generated code; "
+                            f"falling back to file-level comparison. "
+                            f"File-level McCabe complexity collapsed by {int(pct_decrease * 100)}% "
+                            f"(from {comp_orig} to {comp_gen}), exceeding the limit of "
+                            f"{int(complexity_rel_decrease * 100)}%."
+                        )
+                    })
+
     status = "WARNING" if findings else "CLEAN"
     return {
         "status": status,
@@ -197,19 +218,22 @@ def _is_builtins_reference(node):
     Returns True if the node is a builtins reference.
     Added in v1.2 to centralize builtins detection for new obfuscation paths.
     """
-    # Direct name reference: __builtins__
-    if isinstance(node, ast.Name) and node.id in ("__builtins__", "_builtins_"):
+    # Direct name reference: __builtins__, _builtins_, or the regular
+    # `builtins` module (after `import builtins`). The lowercase form was
+    # missed in v1.2, allowing `builtins.eval(...)` to slip through when
+    # `import builtins` was already present in the original code.
+    if isinstance(node, ast.Name) and node.id in ("__builtins__", "_builtins_", "builtins"):
         return True
     # Attribute access: __builtins__.__dict__
     if isinstance(node, ast.Attribute) and node.attr == "__dict__":
-        if isinstance(node.value, ast.Name) and node.value.id in ("__builtins__", "_builtins_"):
+        if isinstance(node.value, ast.Name) and node.value.id in ("__builtins__", "_builtins_", "builtins"):
             return True
     # Subscript on globals(): globals()['__builtins__']
     if isinstance(node, ast.Subscript):
         if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
             if node.value.func.id == "globals":
                 sub_val = get_subscript_string(node)
-                if sub_val in ("__builtins__", "_builtins_"):
+                if sub_val in ("__builtins__", "_builtins_", "builtins"):
                     return True
     return None
 
@@ -286,8 +310,12 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
                     })
                     
         # 3. Attribute access on builtins matching blocklist
+        # Includes "builtins" (the regular module) — closes the gap where
+        # `builtins.eval(...)` slipped through when `import builtins` was
+        # already present in the original code (so the diff-based path
+        # didn't flag it as a new call).
         if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id in ("__builtins__", "_builtins_"):
+            if isinstance(node.value, ast.Name) and node.value.id in ("__builtins__", "_builtins_", "builtins"):
                 if node.attr != "__dict__":  # __dict__ itself is not a forbidden call
                     if is_blocked_call(node.attr, blocklist_imports) or node.attr in ("eval", "exec"):
                         findings.append({

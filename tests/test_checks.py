@@ -201,3 +201,55 @@ import requests
 """
     res3 = check_4_import_drift(extract_metrics(orig_code), extract_metrics(gen_code_requests), default_config)
     assert res3["status"] == "WARNING"
+
+
+def test_check2_rename_bypass(default_config):
+    """Check 2 catches complexity collapse even when the function is renamed.
+
+    Before the fix: orig_funcs={"factorial"}, gen_funcs={"fact"}, intersection
+    empty → per-function loop did nothing AND the file-level fallback was
+    skipped (because both sides have functions). Check 2 silently returned
+    CLEAN. Now a file-level fallback fires when both sides have functions
+    but share no qualified names.
+    """
+    orig_code = """
+def factorial(n):
+    if n < 0:
+        raise ValueError("negative")
+    if n == 0:
+        return 1
+    result = 1
+    for i in range(1, n + 1):
+        if i % 2 == 0:
+            result *= i
+        elif i % 3 == 0:
+            result *= i * 2
+        else:
+            result *= i
+    return result
+"""
+    gen_code = """
+def fact(n):
+    return 1
+"""
+    res = check_2_complexity_collapse(
+        extract_metrics(orig_code), extract_metrics(gen_code), default_config
+    )
+    assert res["status"] == "WARNING"
+    assert any(
+        "falling back to file-level comparison" in f["explanation"]
+        for f in res["findings"]
+    )
+
+
+def test_check3_builtins_module_eval(default_config):
+    """Check 3 catches `builtins.eval(...)` even when `import builtins`
+    was already legitimately present in the original code.
+    """
+    orig_code = "import builtins\n"
+    gen_code = "import builtins\nbuiltins.eval('1+1')\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
