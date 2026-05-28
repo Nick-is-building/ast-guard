@@ -4,6 +4,7 @@ import hashlib
 import json
 import ast
 import builtins
+import statistics
 
 def get_ast_guard_dir() -> str:
     path = os.path.expanduser("~/.ast-guard")
@@ -163,6 +164,162 @@ def get_stats() -> dict:
         pass
         
     return stats
+
+DELTA_METRIC_KEYS = (
+    "if_count",
+    "literal_count",
+    "mccabe_complexity",
+    "comprehension_count",
+    "functional_call_count",
+    "long_string_count",
+)
+
+
+def _empty_delta_summary() -> dict:
+    return {"count": 0, "mean": None, "median": None, "min": None, "max": None, "stddev": None}
+
+
+def get_detailed_stats() -> dict:
+    """
+    Returns a richer breakdown of the local telemetry log than get_stats():
+
+      - total_scans
+      - metric_deltas: for each tracked metric, the per-scan delta
+        (gen - orig) summarized as count/mean/median/min/max/stddev. Only
+        scans where both sides report the metric contribute.
+      - check_correlations: how often selected check combinations fire,
+        e.g. Check 1+2 kombi, Check 5+2 kombi, Check 5 firing alone vs.
+        alongside any other check, and per-check CRITICAL counts.
+      - verdicts_by_mode: verdict distribution split per sensitivity mode.
+      - transformations: count and percentage of scans where each allowlist
+        category was detected.
+
+    Uses only Python's standard library (statistics for mean/median/stdev).
+    """
+    source_path = os.path.join(get_ast_guard_dir(), "telemetry.jsonl")
+
+    result = {
+        "total_scans": 0,
+        "metric_deltas": {k: _empty_delta_summary() for k in DELTA_METRIC_KEYS},
+        "check_correlations": {
+            "check_1_and_2_kombi": 0,
+            "check_5_and_2_kombi": 0,
+            "check_5_alone": 0,
+            "check_5_with_others": 0,
+            "check_3_critical": 0,
+            "check_4_critical": 0,
+        },
+        "verdicts_by_mode": {
+            "strict":   {"CLEAN": 0, "WARNING": 0, "CRITICAL": 0},
+            "standard": {"CLEAN": 0, "WARNING": 0, "CRITICAL": 0},
+            "audit":    {"CLEAN": 0, "WARNING": 0, "CRITICAL": 0},
+        },
+        "transformations": {},
+    }
+
+    if not os.path.exists(source_path):
+        return result
+
+    delta_lists = {k: [] for k in DELTA_METRIC_KEYS}
+    transformation_counts = {}
+
+    try:
+        with open(source_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    continue
+
+                result["total_scans"] += 1
+
+                # Metric deltas (gen - orig)
+                orig_m = record.get("orig_metrics", {}) or {}
+                gen_m = record.get("gen_metrics", {}) or {}
+                for k in DELTA_METRIC_KEYS:
+                    if k in orig_m and k in gen_m:
+                        try:
+                            delta_lists[k].append(gen_m[k] - orig_m[k])
+                        except TypeError:
+                            # Non-numeric metric value — skip.
+                            continue
+
+                # Check correlations
+                cr = record.get("check_results", {}) or {}
+                c1 = cr.get("check_1_hardcoding")
+                c2 = cr.get("check_2_complexity_collapse")
+                c3 = cr.get("check_3_forbidden_calls")
+                c4 = cr.get("check_4_import_drift")
+                c5 = cr.get("check_5_extensional_enumeration")
+
+                if c1 == "WARNING" and c2 == "WARNING":
+                    result["check_correlations"]["check_1_and_2_kombi"] += 1
+                if c5 == "WARNING" and c2 == "WARNING":
+                    result["check_correlations"]["check_5_and_2_kombi"] += 1
+                if c5 == "WARNING":
+                    other_fires = any(
+                        cr.get(name) in ("WARNING", "CRITICAL")
+                        for name in (
+                            "check_1_hardcoding",
+                            "check_2_complexity_collapse",
+                            "check_3_forbidden_calls",
+                            "check_4_import_drift",
+                        )
+                    )
+                    if other_fires:
+                        result["check_correlations"]["check_5_with_others"] += 1
+                    else:
+                        result["check_correlations"]["check_5_alone"] += 1
+                if c3 == "CRITICAL":
+                    result["check_correlations"]["check_3_critical"] += 1
+                if c4 == "CRITICAL":
+                    result["check_correlations"]["check_4_critical"] += 1
+
+                # Verdicts by mode
+                mode = record.get("mode") or "unknown"
+                verdict = record.get("verdict") or "UNKNOWN"
+                mode_bucket = result["verdicts_by_mode"].setdefault(
+                    mode, {"CLEAN": 0, "WARNING": 0, "CRITICAL": 0}
+                )
+                mode_bucket[verdict] = mode_bucket.get(verdict, 0) + 1
+
+                # Transformations
+                for t in record.get("transformations", []) or []:
+                    transformation_counts[t] = transformation_counts.get(t, 0) + 1
+    except Exception:
+        # Best-effort read; partial results are fine for a stats command.
+        pass
+
+    # Summarize deltas
+    summarized = {}
+    for k, values in delta_lists.items():
+        if not values:
+            summarized[k] = _empty_delta_summary()
+            continue
+        summarized[k] = {
+            "count": len(values),
+            "mean": statistics.mean(values),
+            "median": statistics.median(values),
+            "min": min(values),
+            "max": max(values),
+            "stddev": statistics.stdev(values) if len(values) >= 2 else 0.0,
+        }
+    result["metric_deltas"] = summarized
+
+    # Transformations with percentage
+    total = result["total_scans"]
+    result["transformations"] = {
+        name: {
+            "count": count,
+            "percentage": round(count / total * 100, 2) if total > 0 else 0.0,
+        }
+        for name, count in transformation_counts.items()
+    }
+
+    return result
+
 
 def check_sharing_prompt() -> tuple:
     """
