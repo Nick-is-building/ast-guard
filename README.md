@@ -35,8 +35,13 @@ Evaluated against reward hacking patterns from the [TRACE taxonomy](https://arxi
 | Latency | **<50ms** | ~10s | ~10s |
 | Cost per scan | **$0** | $$$ | $$$ |
 
-The current benchmark suite has 24 hacked samples and 9 benign samples spanning 16 subcategories (15 from TRACE plus one from Helff et al.'s "LLMs Gaming Verifiers", arXiv:2604.15149, exercising Check 5). ast-guard covers 15 of 51 TRACE subcategories — the structural ones (hardcoding, complexity collapse, forbidden calls, obfuscation, import drift, extensional enumeration). The remaining 36 TRACE categories are semantic, contextual, or runtime-based and require LLM-level understanding. The two approaches are complementary, not competing.
-For the full TRACE subcategory breakdown and coverage analysis, see [benchmarks/](benchmarks/).
+**What ast-guard catches:** Every structural cheating pattern — hardcoded if/else chains, dictionary lookup tables, compressed data strings, forbidden system calls (eval, exec, os, subprocess), obfuscation attempts (variable aliasing, __builtins__ access, chr() tricks), suspicious new imports, complexity collapse (algorithm replaced by trivial code), and extensional enumeration (memorizing all known input/output pairs instead of solving the problem).
+
+**What ast-guard does NOT catch:** Semantic cheating — code that is structurally normal but logically wrong, produces subtly incorrect results, or games the task specification without leaving a structural trace. These require LLM-level understanding or runtime observation. The two approaches are complementary.
+
+The benchmark covers 16 structural subcategories: 15 from the [TRACE taxonomy](https://arxiv.org/abs/2601.20103) (Deshpande et al., 2026) plus extensional enumeration from [Helff et al.](https://arxiv.org/abs/2604.15149) (2026). TRACE defines 51 subcategories total — the remaining 36 are semantic, contextual, or runtime-based and outside the scope of static AST analysis by design.
+
+For the full subcategory breakdown and coverage analysis, see [benchmarks/](benchmarks/).
 
 ```bash
 # Run the benchmark yourself
@@ -395,6 +400,7 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 | v1.2 ✅ | Constant folding for obfuscation detection, complexity floor for small functions, new anti-obfuscation paths (`__builtins__.__dict__`, `getattr(globals())`), set-literal-size allowlist blocker, SARIF v2.1.0 output for GitHub Security Tab |
 | v1.3 ✅ | Check 5 (Extensional Enumeration, Helff et al. arXiv:2604.15149), Check 5+1 and Check 5+2 kombi escalation, Check 2 rename-bypass fix, `builtins.eval` detection gap closed, reusable GitHub Composite Action, detailed telemetry statistics (`--detailed`, `--export-stats`) |
 | v1.4 | First community-data-driven threshold calibration |
+| v2.0 | Multi-language support via tree-sitter (JavaScript, TypeScript, Go) |
 
 ---
 
@@ -436,13 +442,13 @@ ast-guard/
 - **[SpecBench](https://arxiv.org/abs/2605.21384)** (2026) — Measuring reward hacking in long-horizon coding agents (Codex, Claude Code, OpenCode).
 - **[RHB](https://arxiv.org/abs/2605.02964)** (Thaman, 2026) — Reward Hacking Benchmark for tool-using LLM agents.
 - **[FailProofAI](https://github.com/FailproofAI/failproofai)** — Runtime reliability policies for coding agents. ast-guard provides the complementary code integrity layer.
+- **[LLMs Gaming Verifiers](https://arxiv.org/abs/2604.15149)** (Helff et al., 2026) — Shows that RLVR-trained models systematically abandon rule induction in favor of extensional enumeration. ast-guard's Check 5 detects this pattern structurally.
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. The highest-value contributions are new obfuscation bypass patterns and benchmark samples.
-
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. The highest-value contributions are new benchmark samples (especially novel cheating patterns), obfuscation bypass patterns, and extensional enumeration examples.
 ---
 
 ## License
