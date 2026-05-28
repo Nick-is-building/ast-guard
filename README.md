@@ -449,7 +449,6 @@ ast-guard/
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. The highest-value contributions are new benchmark samples (especially novel cheating patterns), obfuscation bypass patterns, and extensional enumeration examples.
----
 
 ## License
 
