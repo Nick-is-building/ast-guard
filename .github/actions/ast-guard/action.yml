@@ -1,0 +1,57 @@
+name: "ast-guard"
+description: "Deterministic reward hacking detector for LLM-generated Python code. Scans for structural cheating patterns via pure AST analysis."
+branding:
+  icon: "shield"
+  color: "green"
+inputs:
+  original:
+    description: "Path to original Python file"
+    required: true
+  generated:
+    description: "Path to generated/optimized Python file"
+    required: true
+  mode:
+    description: "Sensitivity mode: strict, standard, or audit"
+    required: false
+    default: "strict"
+  sarif-file:
+    description: "Path for SARIF output file"
+    required: false
+    default: "ast-guard-results.sarif"
+  upload-sarif:
+    description: "Upload SARIF results to GitHub Security tab (requires security-events: write)"
+    required: false
+    default: "false"
+  category:
+    description: "SARIF category for GitHub code scanning (prevents overwriting other scan results)"
+    required: false
+    default: "ast-guard"
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install ast-guard
+      shell: bash
+      run: pip install git+https://github.com/Nick-is-building/ast-guard.git
+    - name: Run ast-guard scan (SARIF)
+      shell: bash
+      run: python -m ast_guard.cli check "${{ inputs.original }}" "${{ inputs.generated }}" --mode "${{ inputs.mode }}" --sarif > "${{ inputs.sarif-file }}"
+    - name: Run ast-guard scan (human-readable)
+      shell: bash
+      id: scan
+      run: |
+        set +e
+        python -m ast_guard.cli check "${{ inputs.original }}" "${{ inputs.generated }}" --mode "${{ inputs.mode }}"
+        echo "exit_code=$?" >> $GITHUB_OUTPUT
+    - name: Upload SARIF to GitHub Security
+      if: inputs.upload-sarif == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: ${{ inputs.category }}
+    - name: Check result
+      shell: bash
+      run: exit ${{ steps.scan.outputs.exit_code }}
