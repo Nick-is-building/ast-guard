@@ -1,5 +1,23 @@
 # CHANGELOG.md - ast-guard
 
+## [1.2.0] - 2026-05-26
+
+### Added
+- **Constant Folding (`resolve_constant_string`)**: Recursive resolution of string concatenation via `ast.BinOp(ast.Add)` in obfuscation checks. Catches patterns like `__builtins__['ev' + 'al']`.
+- **New Anti-Obfuscation Paths (Check 3)**:
+  - `__builtins__.__dict__['eval']` detection (attribute chain to `__dict__`)
+  - `getattr(globals()['__builtins__'], 'eval')` detection (globals subscript)
+  - Constant folding in subscript strings (e.g., `__builtins__['ev' + 'al']`)
+- **Complexity Floor (`complexity_abs_min`)**: Check 2 only fires when original complexity >= 5 (default), preventing false positives on small functions.
+- **Per-Function Complexity Analysis**: Check 2 now compares McCabe complexity per qualified function name instead of file-level totals. Closes the "complexity padding" vulnerability.
+- **Set-Literal-Size Allowlist Blocker**: Data Structure Swap override blocked when set literal exceeds `set_literal_max` (default 15 elements).
+- **SARIF v2.1.0 Output**: `--sarif` flag for GitHub Security Tab integration. Stable `partialFingerprints` (astGuardFingerprint/v1) independent of line numbers.
+- **14 new tests** for v1.2 features in `tests/test_v12_features.py`.
+
+### Changed
+- Check 2 explanation messages now include the qualified function name.
+- `_is_builtins_reference()` centralized for all builtins detection paths.
+
 ## [1.1.0] - 2026-05-24
 
 ### Added

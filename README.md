@@ -53,7 +53,7 @@ python -m benchmarks.run_benchmark --json
 ```bash
 git clone https://github.com/Nick-is-building/ast-guard.git
 cd ast-guard
-python -m pytest tests/ -v  # 43 tests across all modules
+python -m pytest tests/ -v  # 57 tests across all modules
 ```
 
 ### CLI
@@ -310,12 +310,12 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 
 ---
 
-## Known Limitations (v1.1)
+## Known Limitations (v1.2)
 
 - **Python only.** Multi-language support (via tree-sitter) planned for v2.0.
-- **No constant folding.** `eval("ex" + "ec")` is caught by the eval catch-all, but string concatenation in subscripts (e.g., `__builtins__['ev' + 'al']`) is not yet resolved. Planned for v1.2.
 - **No semantic analysis.** ast-guard checks structure, not meaning. Semantically incorrect code is the job of your downstream verifier or test suite.
 - **Thresholds are starting points.** Defaults are informed estimates, not empirically validated optima. Community telemetry will calibrate them over time.
+- **AST drift.** Future Python versions may introduce new AST node types that need manual integration.
 
 ---
 
@@ -345,7 +345,7 @@ ast-guard/
 │   └── mcp_server.py      # MCP server (optional: pip install ast-guard[mcp])
 ├── benchmarks/            # TRACE-based benchmark suite (30 samples)
 ├── examples/              # 5 code pairs demonstrating each check
-├── tests/                 # 43 tests across all modules
+├── tests/                 # 57 tests across all modules
 ├── ALLOWLIST.md           # Documented transformation rationales
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md        # Contribution guidelines
