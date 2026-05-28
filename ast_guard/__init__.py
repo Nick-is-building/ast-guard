@@ -42,17 +42,20 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
     effective_mode = config["settings"]["mode"]
     
     # 2. Extract metrics & Parse trees
+    # Only catch SyntaxError — other exceptions indicate real bugs in the
+    # analyzer and must propagate so they can be fixed, not silently masked
+    # as if the input were unparseable.
     try:
         orig_tree = ast.parse(original_code)
         orig_metrics = extract_metrics(original_code)
-    except Exception:
+    except SyntaxError:
         orig_tree = ast.parse("")
         orig_metrics = extract_metrics("")
-        
+
     try:
         gen_tree = ast.parse(generated_code)
         gen_metrics = extract_metrics(generated_code)
-    except Exception as e:
+    except SyntaxError as e:
         # If generated code fails to parse, return CRITICAL for syntax error
         check_results = {
             "check_1_hardcoding": {"status": "CLEAN", "findings": []},
@@ -62,7 +65,9 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
             "check_5_extensional_enumeration": {"status": "CLEAN", "findings": []}
         }
         if telemetry_enabled:
-            telemetry_record = log_scan(original_code, generated_code, orig_metrics, orig_metrics, check_results, [], effective_mode, "CRITICAL")
+            # gen_metrics doesn't exist (parse failed), so pass an empty dict.
+            # Logging orig_metrics twice would falsely claim gen == orig.
+            telemetry_record = log_scan(original_code, generated_code, orig_metrics, {}, check_results, [], effective_mode, "CRITICAL")
         else:
             telemetry_record = {}
         return {
