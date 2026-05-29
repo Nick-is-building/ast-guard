@@ -102,3 +102,26 @@ Three modes: strict (blocks CRITICAL), standard (downgrades except Check 3), aud
 - Every check needs true positive AND true negative tests
 - Commit messages: "v1.X.0: Short description"
 - Never break existing tests
+
+## Current Roadmap — v1.4+
+
+### Phase 1: Detection Gap Fixes
+- Multi-level aliasing in Check 3 (chained, tuple unpack, dict dispatch)
+- chr() obfuscation via aliases and builtins["chr"]
+- resolve_call_name bare-attr collision fix
+
+### Phase 2: Multi-Language Engine (tree-sitter)
+- Language adapter architecture with shared metric interface
+- Adapters: Python (existing ast), Bash, JavaScript/TypeScript
+- Optional dependency: pip install ast-guard[multilang]
+
+### Phase 3: Benchmark Ingestion Framework
+- Trajectory parsers for: TRACE, Terminal Wrench, EvilGenie, 
+  Countdown-Code, RHB, SpecBench
+- Unified format: {original_code, generated_code, language, metadata}
+- Auto-download and caching of benchmark datasets
+
+### Phase 4: Cross-Benchmark Runner
+- Per-benchmark detection rate, precision, false positive rate
+- Comparison table vs. published LLM detector results
+- JSON + Markdown export of results
