@@ -115,6 +115,16 @@ Three modes: strict (blocks CRITICAL), standard (downgrades except Check 3), aud
 - Adapters: Python (existing ast), Bash, JavaScript/TypeScript
 - Optional dependency: pip install ast-guard[multilang]
 
+### Phase 2 Technical Notes
+- tree-sitter + tree-sitter-javascript + tree-sitter-bash as optional deps
+- Install via: pip install ast-guard[multilang]
+- Architecture: one extract_metrics() adapter per language, returns same dict format as existing Python analyzer
+- Python adapter wraps existing ast-based analyzer (zero-dep stays for Python-only users)
+- Bash adapter: detect dangerous calls (curl, wget, eval, exec, rm, chmod, chown, dd, mkfs, nc, ncat)
+- JS/TS adapter: detect eval, Function(), require('child_process'), import('fs'), dangerous globals
+- New file: ast_guard/multilang.py — language detection + adapter dispatch
+- Checks in checks.py stay unchanged — they work on the metric dict, language-agnostic
+
 ### Phase 3: Benchmark Ingestion Framework
 - Trajectory parsers for: TRACE, Terminal Wrench, EvilGenie, 
   Countdown-Code, RHB, SpecBench
