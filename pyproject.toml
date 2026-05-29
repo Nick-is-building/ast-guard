@@ -28,6 +28,11 @@ classifiers = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0.0"]
+multilang = [
+    "tree-sitter>=0.21.0",
+    "tree-sitter-bash>=0.21.0",
+    "tree-sitter-javascript>=0.21.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/Nick-is-building/ast-guard"
