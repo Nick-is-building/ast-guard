@@ -197,16 +197,12 @@ def do_work():
     
     # Calls:
     # os.path.join -> resolved to 'os.path.join'
-    # get_data().action -> dynamic base, resolved to 'action' (or 'get_data', 'action')
-    # wait, get_data() is a Call node itself, and get_data().action is another Call node.
-    # So we have two Call nodes:
-    # 1. get_data() -> Name('get_data') -> 'get_data'
-    # 2. get_data().action() -> Attribute(Call, 'action') -> 'action'
+    # get_data().action() -> base is a Call node (unresolvable) → returns None, excluded
+    #   The inner get_data() -> Name('get_data') -> 'get_data'
     # map(...) -> Name('map') -> 'map'
-    # So call_list contains 'os.path.join', 'get_data', 'action', 'map'.
     assert "os.path.join" in metrics["call_list"]
     assert "get_data" in metrics["call_list"]
-    assert "action" in metrics["call_list"]
+    assert "action" not in metrics["call_list"]  # dynamic base → excluded (avoids .eval() false positives)
     assert "map" in metrics["call_list"]
 
     # Functional calls:

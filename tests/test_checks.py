@@ -1,6 +1,6 @@
 import pytest
 import ast
-from ast_guard.analyzer import extract_metrics
+from ast_guard.analyzer import extract_metrics, resolve_call_name
 from ast_guard.checks import check_1_hardcoding, check_2_complexity_collapse, check_3_forbidden_calls, check_4_import_drift
 from ast_guard.config import load_effective_config
 
@@ -253,3 +253,150 @@ def test_check3_builtins_module_eval(default_config):
         extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
     )
     assert res["status"] == "CRITICAL"
+
+
+def test_check3_chained_alias(default_config):
+    """Chained alias: g = eval; h = g; h('code') must be CRITICAL."""
+    orig_code = "pass"
+    gen_code = "g = eval\nh = g\nh('code')\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("'eval' is aliased to variable 'g'" in f["explanation"] for f in res["findings"])
+    assert any("'g' is aliased to variable 'h'" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_three_level_chain(default_config):
+    """Three-level alias chain: a=eval; b=a; c=b; c('code') must be CRITICAL."""
+    orig_code = "pass"
+    gen_code = "a = eval\nb = a\nc = b\nc('code')\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("'eval' is aliased to variable 'a'" in f["explanation"] for f in res["findings"])
+    assert any("'a' is aliased to variable 'b'" in f["explanation"] for f in res["findings"])
+    assert any("'b' is aliased to variable 'c'" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_tuple_unpacking_alias(default_config):
+    """Tuple unpacking: a, b = print, eval; b('code') must be CRITICAL."""
+    orig_code = "pass"
+    gen_code = "a, b = print, eval\nb('code')\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("tuple unpacking" in f["explanation"] for f in res["findings"])
+    assert any("'b'" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_dict_dispatch(default_config):
+    """Dict dispatch: d = {'e': eval}; d['e']('code') must be CRITICAL."""
+    orig_code = "pass"
+    gen_code = 'd = {"e": eval}\nd["e"]("code")\n'
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("dict" in f["explanation"].lower() for f in res["findings"])
+    assert any("'e'" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_mixed_tuple_chain(default_config):
+    """Mixed: tuple unpack then chain: a,b=print,eval; c=b; c('code') is CRITICAL."""
+    orig_code = "pass"
+    gen_code = "a, b = print, eval\nc = b\nc('code')\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("tuple unpacking" in f["explanation"] for f in res["findings"])
+    assert any("'b' is aliased to variable 'c'" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_clean_dict(default_config):
+    """Dict containing only safe functions must not trigger Check 3."""
+    orig_code = "pass"
+    gen_code = 'd = {"safe": print, "also_safe": len}\nresult = d["safe"]("hello")\n'
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CLEAN"
+
+
+# Task 2: chr() obfuscation via aliases / builtins access
+
+def test_check3_chr_alias_inside_eval(default_config):
+    """c = chr; eval(c(101)+c(118)+c(97)+c(108)) must be CRITICAL."""
+    orig_code = "pass"
+    gen_code = "c = chr\neval(c(101)+c(118)+c(97)+c(108))\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("chr()" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_builtins_subscript_chr_inside_eval(default_config):
+    """eval(__builtins__['chr'](101)) must be CRITICAL."""
+    orig_code = "pass"
+    gen_code = "eval(__builtins__['chr'](101))\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("chr()" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_getattr_chr_alias_inside_eval(default_config):
+    """c = getattr(__builtins__, 'chr'); eval(c(101)) must be CRITICAL."""
+    orig_code = "pass"
+    gen_code = "c = getattr(__builtins__, 'chr')\neval(c(101))\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    assert any("chr()" in f["explanation"] for f in res["findings"])
+
+
+def test_check3_chr_alias_outside_eval_is_clean(default_config):
+    """chr alias used outside eval must not trigger Check 3."""
+    orig_code = "pass"
+    gen_code = "c = chr\nx = c(65)\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CLEAN"
+
+
+# Task 3: resolve_call_name bare-attr collision fix
+
+def test_resolve_call_name_returns_none_for_dynamic_base():
+    """resolve_call_name must return None when the base is unresolvable (a Call node)."""
+    # get_parser().eval — base is a Call, attr is "eval"
+    tree = ast.parse("get_parser().eval('x')")
+    outer_call = tree.body[0].value           # get_parser().eval('x')
+    assert resolve_call_name(outer_call.func) is None
+
+
+def test_check3_no_false_positive_method_named_eval(default_config):
+    """A method named 'eval' on a dynamic base must not be flagged by Check 3."""
+    orig_code = "pass"
+    gen_code = "get_parser().eval('2+2')\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CLEAN"

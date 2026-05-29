@@ -271,23 +271,112 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
             })
             
     # Anti-obfuscation checks (full generated AST scan)
-    forbidden_aliases = set()
-    for node in ast.walk(gen_tree):
-        if isinstance(node, ast.Assign):
-            if isinstance(node.value, ast.Name):
-                val_id = node.value.id
-                if is_blocked_call(val_id, blocklist_imports) or val_id in ("eval", "exec"):
+    # Collect all Assign nodes once, then expand forbidden_aliases to a fixed
+    # point to catch: chained aliases (g=eval; h=g), tuple unpacking
+    # (a,b=print,eval), and dict dispatch (d={"k":eval}; d["k"]()).
+    forbidden_aliases = set()          # var names aliasing a forbidden function
+    chr_aliases = set()                # var names aliasing chr (tracked silently; finding fires in check 6)
+    forbidden_dict_keys = {}           # var_name -> set of string keys holding forbidden values
+    assign_nodes = [n for n in ast.walk(gen_tree) if isinstance(n, ast.Assign)]
+
+    def _is_forbidden_name(name):
+        return is_blocked_call(name, blocklist_imports) or name in ("eval", "exec")
+
+    changed = True
+    while changed:
+        changed = False
+        for node in assign_nodes:
+            value = node.value
+
+            # Direct: x = eval  or  x = known_alias
+            if isinstance(value, ast.Name):
+                val_id = value.id
+                if _is_forbidden_name(val_id) or val_id in forbidden_aliases:
                     for target in node.targets:
-                        if isinstance(target, ast.Name):
+                        if isinstance(target, ast.Name) and target.id not in forbidden_aliases:
                             forbidden_aliases.add(target.id)
+                            changed = True
                             findings.append({
                                 "severity": "CRITICAL",
                                 "line": getattr(node, "lineno", None),
                                 "explanation": f"Obfuscation attempt: Forbidden name '{val_id}' is aliased to variable '{target.id}'."
                             })
-                            
+                # chr is not itself forbidden; track silently so check 6 can detect chr(...)
+                # inside eval args even when called through an alias
+                if val_id == "chr" or val_id in chr_aliases:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id not in chr_aliases:
+                            chr_aliases.add(target.id)
+                            changed = True
+
+            # Tuple unpacking: a, b = print, eval
+            elif isinstance(value, ast.Tuple):
+                for tgt_group in node.targets:
+                    if isinstance(tgt_group, ast.Tuple):
+                        for tgt_elt, val_elt in zip(tgt_group.elts, value.elts):
+                            if (isinstance(val_elt, ast.Name) and isinstance(tgt_elt, ast.Name)
+                                    and (_is_forbidden_name(val_elt.id) or val_elt.id in forbidden_aliases)
+                                    and tgt_elt.id not in forbidden_aliases):
+                                forbidden_aliases.add(tgt_elt.id)
+                                changed = True
+                                findings.append({
+                                    "severity": "CRITICAL",
+                                    "line": getattr(node, "lineno", None),
+                                    "explanation": f"Obfuscation attempt: Forbidden name '{val_elt.id}' is aliased via tuple unpacking to '{tgt_elt.id}'."
+                                })
+                            # Silent chr alias via tuple: a, b = len, chr
+                            if (isinstance(val_elt, ast.Name) and isinstance(tgt_elt, ast.Name)
+                                    and (val_elt.id == "chr" or val_elt.id in chr_aliases)
+                                    and tgt_elt.id not in chr_aliases):
+                                chr_aliases.add(tgt_elt.id)
+                                changed = True
+
+            # Dict literal: d = {"k": eval}
+            elif isinstance(value, ast.Dict):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        for k, v in zip(value.keys, value.values):
+                            if (isinstance(v, ast.Name)
+                                    and (_is_forbidden_name(v.id) or v.id in forbidden_aliases)
+                                    and isinstance(k, ast.Constant) and isinstance(k.value, str)):
+                                key_str = k.value
+                                if key_str not in forbidden_dict_keys.get(tgt.id, set()):
+                                    forbidden_dict_keys.setdefault(tgt.id, set()).add(key_str)
+                                    changed = True
+                                    findings.append({
+                                        "severity": "CRITICAL",
+                                        "line": getattr(node, "lineno", None),
+                                        "explanation": f"Obfuscation attempt: Forbidden name '{v.id}' stored in dict '{tgt.id}' under key '{key_str}'."
+                                    })
+
+            # getattr(__builtins__, "chr") assigned to a name → silent chr alias
+            elif isinstance(value, ast.Call):
+                if (isinstance(value.func, ast.Name) and value.func.id == "getattr"
+                        and len(value.args) >= 2
+                        and _is_builtins_reference(value.args[0])
+                        and isinstance(value.args[1], ast.Constant) and value.args[1].value == "chr"):
+                    for tgt in node.targets:
+                        if isinstance(tgt, ast.Name) and tgt.id not in chr_aliases:
+                            chr_aliases.add(tgt.id)
+                            changed = True
+
+    def _is_chr_access(func_node):
+        """True when func_node resolves to chr() by any obfuscation path."""
+        if isinstance(func_node, ast.Name):
+            return func_node.id == "chr" or func_node.id in chr_aliases
+        if (isinstance(func_node, ast.Subscript)
+                and _is_builtins_reference(func_node.value)
+                and get_subscript_string(func_node) == "chr"):
+            return True
+        if (isinstance(func_node, ast.Attribute)
+                and func_node.attr == "chr"
+                and isinstance(func_node.value, ast.Name)
+                and func_node.value.id in ("__builtins__", "_builtins_", "builtins")):
+            return True
+        return False
+
     for node in ast.walk(gen_tree):
-        # 1. Alias call
+        # 1. Alias call (name-based)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in forbidden_aliases:
                 findings.append({
@@ -295,6 +384,19 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
                     "line": getattr(node, "lineno", None),
                     "explanation": f"Call to obfuscated forbidden alias '{node.func.id}'."
                 })
+
+        # 1b. Dict dispatch call: d["k"]() where d holds a forbidden value at "k"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Subscript):
+            if isinstance(node.func.value, ast.Name):
+                var_name = node.func.value.id
+                if var_name in forbidden_dict_keys:
+                    key_str = get_subscript_string(node.func)
+                    if key_str and key_str in forbidden_dict_keys[var_name]:
+                        findings.append({
+                            "severity": "CRITICAL",
+                            "line": getattr(node, "lineno", None),
+                            "explanation": f"Call to forbidden function via dict dispatch: '{var_name}[\"{key_str}\"]'."
+                        })
                 
         # 2. Subscript access on builtins matching blocklist
         #    v1.2: Now also catches __builtins__.__dict__['eval'] and
@@ -345,17 +447,23 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
             })
             
         # 6. chr() inside eval/exec/import arguments
+        # Catches direct chr(), chr aliases, builtins["chr"], and calls via forbidden_aliases
         if isinstance(node, ast.Call):
             func_name = resolve_call_name(node.func)
-            if func_name in ("eval", "exec", "__import__", "importlib.import_module", "import_module"):
+            outer_is_forbidden = (
+                func_name in ("eval", "exec", "__import__", "importlib.import_module", "import_module")
+                or (isinstance(node.func, ast.Name) and node.func.id in forbidden_aliases)
+            )
+            if outer_is_forbidden:
+                outer_label = func_name if func_name else node.func.id
                 nodes_to_walk = list(node.args) + [kw.value for kw in node.keywords]
                 for arg in nodes_to_walk:
                     for subnode in ast.walk(arg):
-                        if isinstance(subnode, ast.Call) and isinstance(subnode.func, ast.Name) and subnode.func.id == "chr":
+                        if isinstance(subnode, ast.Call) and _is_chr_access(subnode.func):
                             findings.append({
                                 "severity": "CRITICAL",
                                 "line": getattr(node, "lineno", None),
-                                "explanation": f"Obfuscation attempt: chr() call used inside '{func_name}' arguments."
+                                "explanation": f"Obfuscation attempt: chr() call used inside '{outer_label}' arguments."
                             })
                             
     status = "CRITICAL" if findings else "CLEAN"

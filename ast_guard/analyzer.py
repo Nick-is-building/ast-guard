@@ -186,7 +186,8 @@ def resolve_call_name(func_node):
     """
     Recursively resolves call names to flat string representation.
     e.g., os.path.join -> 'os.path.join'
-    If base object is dynamic, the attribute name is returned.
+    Returns None when the base is unresolvable (e.g. a Call or Subscript),
+    avoiding false matches where any .eval() or .open() collides with blocked names.
     """
     if isinstance(func_node, ast.Name):
         return func_node.id
@@ -194,8 +195,7 @@ def resolve_call_name(func_node):
         base = resolve_call_name(func_node.value)
         if base:
             return f"{base}.{func_node.attr}"
-        else:
-            return func_node.attr
+        return None
     return None
 
 def resolve_constant_string(node):
