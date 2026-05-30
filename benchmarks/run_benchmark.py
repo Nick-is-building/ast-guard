@@ -214,58 +214,57 @@ _BENCHMARK_NAMES = [
 ]
 
 
+_MULTILANG_LANGUAGES = frozenset({"bash", "javascript"})
+
+
 def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
     """Run ast-guard on a CodePair and return a result record."""
     language = pair.get("language", "python")
+    base = {
+        "sample_id": pair["sample_id"],
+        "benchmark": pair["benchmark"],
+        "category": pair["category"],
+        "language": language,
+    }
 
-    # ast-guard's scan() is Python-only; for other languages we report N/A.
-    if language != "python":
-        return {
-            "sample_id": pair["sample_id"],
-            "benchmark": pair["benchmark"],
-            "category": pair["category"],
-            "language": language,
-            "verdict": "N/A",
-            "detected": False,
-            "skipped": True,
-            "skip_reason": f"language={language} not supported by Python scanner",
-        }
+    if language == "python":
+        try:
+            result = scan(
+                pair["original_code"],
+                pair["generated_code"],
+                mode=mode,
+                telemetry_enabled=False,
+            )
+            verdict = result["verdict"]
+            return {**base, "verdict": verdict, "detected": verdict in ("WARNING", "CRITICAL"), "skipped": False}
+        except Exception as exc:
+            logger.warning("Error scanning %s/%s: %s", pair["benchmark"], pair["sample_id"], exc)
+            return {**base, "verdict": "ERROR", "detected": False, "skipped": True, "skip_reason": str(exc)}
 
-    try:
-        result = scan(
-            pair["original_code"],
-            pair["generated_code"],
-            mode=mode,
-            telemetry_enabled=False,
-        )
-        verdict = result["verdict"]
-        detected = verdict in ("WARNING", "CRITICAL")
-        return {
-            "sample_id": pair["sample_id"],
-            "benchmark": pair["benchmark"],
-            "category": pair["category"],
-            "language": language,
-            "verdict": verdict,
-            "detected": detected,
-            "skipped": False,
-        }
-    except Exception as exc:
-        logger.warning(
-            "Error scanning sample %s from %s: %s",
-            pair.get("sample_id"),
-            pair.get("benchmark"),
-            exc,
-        )
-        return {
-            "sample_id": pair["sample_id"],
-            "benchmark": pair["benchmark"],
-            "category": pair["category"],
-            "language": language,
-            "verdict": "ERROR",
-            "detected": False,
-            "skipped": True,
-            "skip_reason": str(exc),
-        }
+    if language in _MULTILANG_LANGUAGES:
+        try:
+            from ast_guard import scan_multilang
+            result = scan_multilang(
+                pair["original_code"],
+                pair["generated_code"],
+                language=language,
+                mode=mode,
+                telemetry_enabled=False,
+            )
+            verdict = result["verdict"]
+            return {**base, "verdict": verdict, "detected": verdict in ("WARNING", "CRITICAL"), "skipped": False}
+        except ImportError:
+            return {
+                **base, "verdict": "N/A", "detected": False, "skipped": True,
+                "skip_reason": f"multilang extras not installed for language={language}",
+            }
+        except Exception as exc:
+            logger.warning("Error scanning %s/%s: %s", pair["benchmark"], pair["sample_id"], exc)
+            return {**base, "verdict": "ERROR", "detected": False, "skipped": True, "skip_reason": str(exc)}
+
+    # language == "unknown" or unsupported
+    return {**base, "verdict": "N/A", "detected": False, "skipped": True,
+            "skip_reason": f"language={language!r} not supported"}
 
 
 def run_external_benchmarks(

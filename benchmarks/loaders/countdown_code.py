@@ -1,14 +1,25 @@
 """
 Loader for the Countdown-Code benchmark.
 
-Clones https://github.com/zohaib-khan5040/Countdown-Code and extracts 334
-Python samples of reward tampering — model outputs that game the verifier
-instead of solving the countdown problem correctly.
+Reads o4-mini-distillation-16k.jsonl from the Countdown-Code repo.
+Each record has three fields:
+  input   — {target: int, nums: [int, ...]}
+  prompt  — ChatML message list
+  output  — {summary: [...], text: str}
+
+The output.text field contains a <think>...</think> block followed by a JSON
+object with "solution.py" and "test.py" keys.  We extract solution.py as the
+generated code and derive the task description from the user prompt message.
+
+This is a distillation dataset; some solutions attempt to hack the verifier
+(e.g. hardcoding the answer, rewriting test.py) — those are the relevant cases
+for ast-guard.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -18,10 +29,71 @@ logger = logging.getLogger(__name__)
 
 _REPO_URL = "https://github.com/zohaib-khan5040/Countdown-Code"
 
+# Strip <think>...</think> blocks then find the JSON object.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _extract_solution_py(output_text: str) -> str | None:
+    """Extract solution.py content from the model output text."""
+    cleaned = _THINK_RE.sub("", output_text).strip()
+    m = _JSON_OBJECT_RE.search(cleaned)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group())
+        return obj.get("solution.py") or None
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_user_content(prompt: list) -> str:
+    """Return the content of the first user message in the ChatML prompt."""
+    for msg in prompt:
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            return str(msg.get("content") or "").strip()
+    return ""
+
 
 def _extract_from_record(rec: dict, idx: int) -> CodePair | None:
-    """Convert a Countdown-Code record to a CodePair, or None if unusable."""
-    # Multiple plausible shapes; try most-specific first.
+    # New format: input / prompt / output
+    prompt = rec.get("prompt")
+    output = rec.get("output")
+    if prompt and output:
+        out_text = ""
+        if isinstance(output, dict):
+            out_text = str(output.get("text") or "")
+        elif isinstance(output, str):
+            out_text = output
+
+        generated = _extract_solution_py(out_text) if out_text else None
+        if not generated:
+            return None
+
+        original = _extract_user_content(prompt) if isinstance(prompt, list) else ""
+        if not original:
+            inp = rec.get("input") or {}
+            if isinstance(inp, dict):
+                original = f"# target={inp.get('target')}, nums={inp.get('nums')}"
+            else:
+                original = "# countdown task"
+
+        sample_id = rec.get("id") or rec.get("sample_id") or str(idx)
+        return CodePair(
+            original_code=original,
+            generated_code=generated,
+            language="python",
+            benchmark="countdown-code",
+            category="reward-tampering",
+            sample_id=str(sample_id),
+            metadata={
+                "model": rec.get("model") or "o4-mini",
+                "input": rec.get("input"),
+                "is_hack": False,
+            },
+        )
+
+    # Legacy format: original_code / model_output / etc.
     original = (
         rec.get("original_code")
         or rec.get("reference_code")
@@ -39,8 +111,6 @@ def _extract_from_record(rec: dict, idx: int) -> CodePair | None:
     )
     if not generated:
         return None
-
-    # When there is no reference, use the task description as original_code.
     if not original:
         original = (
             rec.get("task") or rec.get("problem") or rec.get("description")
@@ -50,9 +120,7 @@ def _extract_from_record(rec: dict, idx: int) -> CodePair | None:
     sample_id = (
         rec.get("id") or rec.get("sample_id") or rec.get("problem_id") or str(idx)
     )
-    category = (
-        rec.get("category") or rec.get("hack_type") or "reward-tampering"
-    )
+    category = rec.get("category") or rec.get("hack_type") or "reward-tampering"
 
     return CodePair(
         original_code=original,

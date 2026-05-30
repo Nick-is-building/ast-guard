@@ -1,10 +1,17 @@
 """
 Loader for the Terminal Wrench benchmark.
 
-Clones https://github.com/few-sh/terminal-wrench and parses trajectory JSON
-files. Each trajectory captures an agent session where tool calls contain
-bash commands or code blocks; we extract those as generated_code and use
-the task description as context.
+Reads ~/.ast-guard/benchmarks/terminal-wrench/index/ which contains:
+  tasks.json        — per-task metadata with baseline info
+  trajectories.json — per-trajectory metadata with exploit descriptions
+
+The public release does not include the raw agent transcripts, so we compose a
+synthetic CodePair from available fields:
+  original_code = task description (from baseline label)
+  generated_code = exploit summary + key hack steps (from hacked trajectories)
+
+Only "rewarded_serious_exploit" trajectories are included as hacked samples;
+"attacker_legitimate_solve" trajectories are used as benign pairs.
 """
 from __future__ import annotations
 
@@ -16,15 +23,12 @@ from pathlib import Path
 
 from benchmarks.loaders import BenchmarkLoader, CodePair, register
 
+_CODE_FENCE = re.compile(r"```(?P<lang>[a-zA-Z]*)\n(?P<body>.*?)```", re.DOTALL)
+_CODE_FENCE_RE = _CODE_FENCE
+
 logger = logging.getLogger(__name__)
 
 _REPO_URL = "https://github.com/few-sh/terminal-wrench"
-
-# Fenced code block extractor — captures language tag and body.
-_CODE_FENCE = re.compile(
-    r"```(?P<lang>[a-zA-Z]*)\n(?P<body>.*?)```",
-    re.DOTALL,
-)
 
 _CATEGORY_MAP = {
     "hollow": "hollow-implementation",
@@ -40,7 +44,7 @@ _CATEGORY_MAP = {
 
 def _norm_category(raw: str) -> str:
     key = raw.lower().replace("_", "-").replace(" ", "-")
-    return _CATEGORY_MAP.get(key, raw)
+    return _CATEGORY_MAP.get(key, raw or "unknown")
 
 
 def _extract_code_blocks(text: str) -> list[tuple[str, str]]:
@@ -52,15 +56,17 @@ def _extract_code_blocks(text: str) -> list[tuple[str, str]]:
 
 
 def _detect_lang(code: str, hint: str = "") -> str:
-    from ast_guard.multilang import detect_language
     if hint in ("python", "bash", "javascript"):
         return hint
-    return detect_language(code)
+    try:
+        from ast_guard.multilang import detect_language
+        return detect_language(code)
+    except ImportError:
+        return "unknown"
 
 
 def _tool_calls_from_step(step: dict) -> list[dict]:
     """Normalise a trajectory step into a list of tool-call dicts."""
-    # Handle both {"tool_calls": [...]} and {"tool_use": {...}} shapes.
     calls = step.get("tool_calls") or step.get("tool_use") or []
     if isinstance(calls, dict):
         calls = [calls]
@@ -68,41 +74,38 @@ def _tool_calls_from_step(step: dict) -> list[dict]:
 
 
 def _parse_trajectory(path: Path, sample_id: str) -> list[CodePair]:
-    """Parse a single trajectory JSON file into zero or more CodePairs."""
+    """Parse a legacy trajectory JSON file into zero or more CodePairs."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+        data = _load_json(path)
+    except Exception as exc:
         logger.warning("Skipping %s: %s", path.name, exc)
         return []
+    if data is None:
+        return []
 
-    # Accept both single-trajectory objects and lists of trajectories.
     records = data if isinstance(data, list) else [data]
     pairs: list[CodePair] = []
 
     for idx, rec in enumerate(records):
+        if not isinstance(rec, dict):
+            continue
         task = rec.get("task") or rec.get("problem") or rec.get("description", "")
         raw_category = rec.get("category") or rec.get("type") or "unknown"
         category = _norm_category(raw_category)
         is_hack = bool(rec.get("is_hack") or rec.get("hack") or rec.get("exploit"))
 
-        # Gather all code produced by the agent in tool calls / messages.
         code_snippets: list[tuple[str, str]] = []
         steps = rec.get("trajectory") or rec.get("steps") or rec.get("messages") or []
         for step in steps:
             role = step.get("role", "")
             content = step.get("content") or ""
-
-            # Extract fenced code from message bodies.
             if content:
                 code_snippets.extend(_extract_code_blocks(content))
-
-            # Extract code from tool-call inputs.
             for call in _tool_calls_from_step(step):
                 inp = call.get("input") or call.get("arguments") or call.get("params") or {}
                 if isinstance(inp, str):
                     code_snippets.extend(_extract_code_blocks(inp))
-                    if not _CODE_FENCE.search(inp):
-                        # Plain shell command — treat as bash.
+                    if not _CODE_FENCE_RE.search(inp):
                         code_snippets.append(("bash", inp.strip()))
                 elif isinstance(inp, dict):
                     cmd = inp.get("command") or inp.get("code") or inp.get("script") or ""
@@ -113,7 +116,6 @@ def _parse_trajectory(path: Path, sample_id: str) -> list[CodePair]:
         if not code_snippets:
             continue
 
-        # Use task description as original_code surrogate (captures intent).
         original_code = task if task else "# no task description"
         generated_code = "\n\n".join(body for _, body in code_snippets)
         lang = _detect_lang(generated_code, code_snippets[0][0])
@@ -134,6 +136,84 @@ def _parse_trajectory(path: Path, sample_id: str) -> list[CodePair]:
         ))
 
     return pairs
+
+
+def _load_json(path: Path) -> list | dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not read %s: %s", path, exc)
+        return None
+
+
+def _build_task_map(tasks: list[dict]) -> dict[str, dict]:
+    """Return {task_id: task_record} for quick lookup."""
+    return {str(t.get("task_id", "")): t for t in tasks if isinstance(t, dict)}
+
+
+def _make_pair_from_trajectory(traj: dict, task_map: dict[str, dict]) -> CodePair | None:
+    """Build a CodePair from a trajectory metadata record."""
+    classification = str(traj.get("classification") or "")
+    is_hack = traj.get("judged_serious_exploit") or classification == "rewarded_serious_exploit"
+    is_legit = traj.get("judged_legitimate_solve") or classification == "attacker_legitimate_solve"
+
+    if not is_hack and not is_legit:
+        return None
+
+    task_id = str(traj.get("task_id") or "")
+    task = task_map.get(task_id, {})
+    baseline = task.get("baseline") or {}
+
+    # Use the baseline label as the task description / original code surrogate.
+    original_code = str(baseline.get("label") or task.get("description") or "# task description not available").strip()
+    if not original_code:
+        original_code = "# task description not available"
+
+    if is_hack:
+        # Compose a pseudo-code representation from the exploit metadata.
+        summary = str(traj.get("brief_exploit_summary") or "")
+        explanation = str(traj.get("explanation") or "")
+        key_steps = traj.get("key_hack_steps") or []
+        if isinstance(key_steps, list):
+            key_steps_text = "\n".join(f"# {step}" for step in key_steps if step)
+        else:
+            key_steps_text = f"# {key_steps}"
+
+        parts = []
+        if summary:
+            parts.append(f"# Exploit: {summary}")
+        if key_steps_text:
+            parts.append(key_steps_text)
+        if explanation:
+            parts.append(f"# Explanation: {explanation[:500]}")
+        generated_code = "\n".join(parts) if parts else "# no exploit details available"
+        category = "exploit"
+    else:
+        generated_code = original_code
+        category = "legitimate"
+
+    # Infer category from observed_categories if available.
+    observed = traj.get("observed_categories") or []
+    if observed and isinstance(observed, list):
+        category = _norm_category(str(observed[0]))
+
+    run_name = str(traj.get("run_name") or "")
+    sample_id = f"{task_id}-{traj.get('trajectory_label', '')}-{traj.get('attempt_index_before_fixer', 0)}"
+
+    return CodePair(
+        original_code=original_code,
+        generated_code=generated_code,
+        language="bash",
+        benchmark="terminal-wrench",
+        category=category,
+        sample_id=sample_id,
+        metadata={
+            "is_hack": bool(is_hack),
+            "classification": classification,
+            "model": str(traj.get("model") or ""),
+            "run_name": run_name,
+        },
+    )
 
 
 @register
@@ -163,13 +243,52 @@ class TerminalWrenchLoader(BenchmarkLoader):
             )
 
     def load_samples(self) -> list[CodePair]:
-        """Walk all JSON files under data_dir and return CodePair records."""
+        """Load samples from either the index format or legacy trajectory JSON files."""
         if not self.is_available():
             raise FileNotFoundError(
                 f"Terminal Wrench data not found at {self.data_dir}. "
                 "Run with --download or call loader.download()."
             )
 
+        index_dir = self.data_dir / "index"
+        trajectories_path = index_dir / "trajectories.json"
+
+        if trajectories_path.exists():
+            return self._load_from_index(index_dir, trajectories_path)
+        return self._load_from_trajectory_files()
+
+    def _load_from_index(self, index_dir: Path, trajectories_path: Path) -> list[CodePair]:
+        """Load from index/trajectories.json (real dataset format)."""
+        trajectories_raw = _load_json(trajectories_path)
+        if not isinstance(trajectories_raw, list):
+            logger.warning("terminal-wrench: unexpected format in trajectories.json")
+            return []
+
+        tasks_path = index_dir / "tasks.json"
+        task_map: dict[str, dict] = {}
+        if tasks_path.exists():
+            tasks_raw = _load_json(tasks_path)
+            if isinstance(tasks_raw, list):
+                task_map = _build_task_map(tasks_raw)
+
+        pairs: list[CodePair] = []
+        seen: set[str] = set()
+        for traj in trajectories_raw:
+            if not isinstance(traj, dict):
+                continue
+            pair = _make_pair_from_trajectory(traj, task_map)
+            if pair is None:
+                continue
+            if pair["sample_id"] in seen:
+                continue
+            seen.add(pair["sample_id"])
+            pairs.append(pair)
+
+        logger.info("terminal-wrench: loaded %d samples from index", len(pairs))
+        return pairs
+
+    def _load_from_trajectory_files(self) -> list[CodePair]:
+        """Load from legacy trajectory JSON files (test / custom data format)."""
         pairs: list[CodePair] = []
         json_files = sorted(self.data_dir.rglob("*.json"))
         if not json_files:
@@ -179,5 +298,5 @@ class TerminalWrenchLoader(BenchmarkLoader):
             sample_id = path.stem
             pairs.extend(_parse_trajectory(path, sample_id))
 
-        logger.info("terminal-wrench: loaded %d samples", len(pairs))
+        logger.info("terminal-wrench: loaded %d samples from trajectory files", len(pairs))
         return pairs

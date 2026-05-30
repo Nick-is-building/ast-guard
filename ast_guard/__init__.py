@@ -1,5 +1,5 @@
 __version__ = "1.3.0"
-__all__ = ["scan", "feedback"]
+__all__ = ["scan", "scan_multilang", "feedback"]
 
 import ast
 from ast_guard.analyzer import extract_metrics
@@ -178,6 +178,152 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
         "transformations": transformations,
         "telemetry": telemetry_record
     }
+
+def scan_multilang(
+    original_code: str,
+    generated_code: str,
+    language: str,
+    mode: str = None,
+    config_override: dict = None,
+    telemetry_enabled: bool = True,
+) -> dict:
+    """
+    Scan non-Python code using the multilang metric adapters.
+
+    Uses extract_metrics_multilang() for bash and JavaScript so the same
+    5-check pipeline can operate on those languages. Check 1 (long-string
+    sub-rule) and Check 3 (alias obfuscation) are Python-AST-specific and are
+    skipped; language-specific dangerous calls from the adapter's
+    ``dangerous_calls`` field supplement Check 3 instead.
+
+    Args:
+        original_code: The original/baseline code.
+        generated_code: The LLM-generated code.
+        language: One of 'bash', 'javascript'.
+        mode: 'strict', 'standard', or 'audit'.
+        config_override: Optional config overrides dict.
+        telemetry_enabled: Whether to log telemetry.
+
+    Returns:
+        Same result dict shape as scan().
+    """
+    from ast_guard.multilang import extract_metrics_multilang, SUPPORTED_LANGUAGES
+
+    config = load_effective_config(config_override or {})
+    if mode:
+        config["settings"] = {"mode": mode}
+    else:
+        config.setdefault("settings", {}).setdefault("mode", "strict")
+    effective_mode = config["settings"]["mode"]
+
+    # Neutral empty metrics used as fallback when a side fails to parse.
+    _EMPTY_METRICS: dict = {
+        "if_count": 0, "guard_clause_count": 0, "loop_depth": 0,
+        "mccabe_complexity": 1, "literal_count": 0, "long_string_count": 0,
+        "import_list": [], "call_list": [], "comprehension_count": 0,
+        "functional_call_count": 0, "max_set_literal_size": 0,
+        "function_complexities": {}, "enumeration_analysis": [],
+        "dangerous_calls": [],
+    }
+
+    try:
+        orig_metrics = extract_metrics_multilang(original_code, language)
+    except Exception:
+        orig_metrics = dict(_EMPTY_METRICS)
+
+    try:
+        gen_metrics = extract_metrics_multilang(generated_code, language)
+    except Exception:
+        gen_metrics = dict(_EMPTY_METRICS)
+
+    # Empty Python AST placeholder — Check 1 long-string sub-rule and
+    # Check 3 alias-obfuscation sub-rule are Python-AST-only and won't fire.
+    empty_tree = ast.parse("")
+
+    check_1 = check_1_hardcoding(orig_metrics, gen_metrics, empty_tree, empty_tree, config)
+    check_2 = check_2_complexity_collapse(orig_metrics, gen_metrics, config)
+    check_3 = check_3_forbidden_calls(orig_metrics, gen_metrics, empty_tree, config)
+    check_4 = check_4_import_drift(orig_metrics, gen_metrics, config)
+    check_5 = check_5_extensional_enumeration(orig_metrics, gen_metrics, config)
+
+    # Supplement Check 3 with language-specific dangerous calls that are
+    # new in generated code (the standard blocklist covers eval/exec; the
+    # adapter's dangerous_calls field adds curl, wget, rm, execSync, …).
+    orig_dangerous = set(orig_metrics.get("dangerous_calls", []))
+    gen_dangerous = set(gen_metrics.get("dangerous_calls", []))
+    new_dangerous = gen_dangerous - orig_dangerous
+    for call in sorted(new_dangerous):
+        check_3["findings"].append({
+            "severity": "CRITICAL",
+            "line": None,
+            "explanation": f"New dangerous {language} call '{call}' in generated code.",
+        })
+    if new_dangerous:
+        check_3["status"] = "CRITICAL"
+
+    # Combination logic (same as scan()).
+    kombi_triggered = (
+        (check_1["status"] == "WARNING" and check_2["status"] == "WARNING")
+        or (check_5["status"] == "WARNING" and check_2["status"] == "WARNING")
+        or (check_5["status"] == "WARNING" and check_1["status"] == "WARNING")
+    )
+
+    # Allowlist override for Check 2 is blocked if Check 1/3/5 also fire.
+    if check_2["status"] == "WARNING":
+        transformations = detect_allowlist_transformations(
+            original_code, generated_code, orig_metrics, gen_metrics, config
+        )
+        if transformations:
+            if check_1["status"] == "CLEAN" and check_3["status"] == "CLEAN" and check_5["status"] == "CLEAN":
+                check_2["status"] = "CLEAN"
+    else:
+        transformations = []
+
+    check_results = {
+        "check_1_hardcoding": check_1,
+        "check_2_complexity_collapse": check_2,
+        "check_3_forbidden_calls": check_3,
+        "check_4_import_drift": check_4,
+        "check_5_extensional_enumeration": check_5,
+    }
+
+    if kombi_triggered:
+        raw_verdict = "CRITICAL"
+    elif check_3["status"] == "CRITICAL" or check_4["status"] == "CRITICAL":
+        raw_verdict = "CRITICAL"
+    elif any(c["status"] == "WARNING" for c in check_results.values()):
+        raw_verdict = "WARNING"
+    else:
+        raw_verdict = "CLEAN"
+
+    if effective_mode == "standard":
+        for chk in (check_1, check_2, check_4, check_5):
+            if chk["status"] == "CRITICAL":
+                chk["status"] = "WARNING"
+        verdict = "CRITICAL" if check_3["status"] == "CRITICAL" else (
+            "WARNING" if (kombi_triggered or any(c["status"] == "WARNING" for c in check_results.values()))
+            else "CLEAN"
+        )
+    else:
+        verdict = raw_verdict
+
+    telemetry_record: dict = {}
+    if telemetry_enabled:
+        telemetry_record = log_scan(
+            original_code, generated_code,
+            orig_metrics, gen_metrics,
+            check_results, transformations,
+            effective_mode, verdict,
+        )
+
+    return {
+        "verdict": verdict,
+        "mode": effective_mode,
+        "checks": check_results,
+        "transformations": transformations,
+        "telemetry": telemetry_record,
+    }
+
 
 def feedback(scan_id: str, label: str, comment: str = "") -> bool:
     """Submits user feedback for a given scan."""
