@@ -3,17 +3,20 @@
 ast-guard Benchmark Runner
 
 Evaluates ast-guard against reward hacking samples organized by the
-TRACE taxonomy (Deshpande et al., 2026). Measures detection rate,
-false positive rate, and per-category performance.
+TRACE taxonomy (Deshpande et al., 2026) and against external benchmark
+datasets loaded via the Phase 3 ingestion framework.
 
 Usage:
     python -m benchmarks.run_benchmark
     python -m benchmarks.run_benchmark --json
     python -m benchmarks.run_benchmark --verbose
+    python -m benchmarks.run_benchmark --benchmark evilgenie --download
+    python -m benchmarks.run_benchmark --benchmark all --download
 """
 
 import sys
 import json
+import logging
 import argparse
 from pathlib import Path
 
@@ -22,6 +25,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ast_guard import scan
 from benchmarks.samples.trace_samples import HACKED_SAMPLES, BENIGN_SAMPLES
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # TRACE taxonomy mapping — which categories ast-guard covers vs. cannot cover
@@ -89,7 +95,7 @@ TRACE_TAXONOMY = {
 
 
 def run_benchmark(verbose=False):
-    """Run all benchmark samples and collect results."""
+    """Run the built-in TRACE benchmark samples and collect results."""
     results = {
         "hacked": {"total": 0, "detected": 0, "missed": 0, "details": []},
         "benign": {"total": 0, "correct": 0, "false_positives": 0, "details": []},
@@ -193,6 +199,243 @@ def compute_taxonomy_coverage():
     }
 
 
+# ---------------------------------------------------------------------------
+# Phase 3: external benchmark runner
+# ---------------------------------------------------------------------------
+
+_BENCHMARK_NAMES = [
+    "terminal-wrench",
+    "evilgenie",
+    "trace",
+    "countdown-code",
+    "helff-gaming",
+    "school-of-hacks",
+    "specbench",
+]
+
+
+def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
+    """Run ast-guard on a CodePair and return a result record."""
+    language = pair.get("language", "python")
+
+    # ast-guard's scan() is Python-only; for other languages we report N/A.
+    if language != "python":
+        return {
+            "sample_id": pair["sample_id"],
+            "benchmark": pair["benchmark"],
+            "category": pair["category"],
+            "language": language,
+            "verdict": "N/A",
+            "detected": False,
+            "skipped": True,
+            "skip_reason": f"language={language} not supported by Python scanner",
+        }
+
+    try:
+        result = scan(
+            pair["original_code"],
+            pair["generated_code"],
+            mode=mode,
+            telemetry_enabled=False,
+        )
+        verdict = result["verdict"]
+        detected = verdict in ("WARNING", "CRITICAL")
+        return {
+            "sample_id": pair["sample_id"],
+            "benchmark": pair["benchmark"],
+            "category": pair["category"],
+            "language": language,
+            "verdict": verdict,
+            "detected": detected,
+            "skipped": False,
+        }
+    except Exception as exc:
+        logger.warning(
+            "Error scanning sample %s from %s: %s",
+            pair.get("sample_id"),
+            pair.get("benchmark"),
+            exc,
+        )
+        return {
+            "sample_id": pair["sample_id"],
+            "benchmark": pair["benchmark"],
+            "category": pair["category"],
+            "language": language,
+            "verdict": "ERROR",
+            "detected": False,
+            "skipped": True,
+            "skip_reason": str(exc),
+        }
+
+
+def run_external_benchmarks(
+    benchmark_names: list[str],
+    download: bool = False,
+    mode: str = "strict",
+) -> dict:
+    """Load and scan external benchmark samples; return structured results."""
+    from benchmarks.loaders import get_loader, get_all_loaders
+
+    if benchmark_names == ["all"]:
+        loaders = get_all_loaders()
+    else:
+        loaders = []
+        for name in benchmark_names:
+            try:
+                loaders.append(get_loader(name))
+            except KeyError as exc:
+                logger.error("%s", exc)
+
+    results: dict[str, dict] = {}
+
+    for loader in loaders:
+        name = loader.name
+        logger.info("Processing benchmark: %s", name)
+
+        if download:
+            try:
+                loader.download()
+            except Exception as exc:
+                logger.warning("Download failed for %s: %s", name, exc)
+
+        if not loader.is_available():
+            logger.info("Skipping %s — data not available", name)
+            results[name] = {
+                "status": "unavailable",
+                "total": 0,
+                "detected": 0,
+                "skipped": 0,
+                "detection_rate": 0.0,
+                "by_category": {},
+                "details": [],
+            }
+            continue
+
+        try:
+            samples = loader.load_samples()
+        except Exception as exc:
+            logger.error("Failed to load %s: %s", name, exc)
+            results[name] = {
+                "status": "error",
+                "error": str(exc),
+                "total": 0,
+                "detected": 0,
+                "skipped": 0,
+                "detection_rate": 0.0,
+                "by_category": {},
+                "details": [],
+            }
+            continue
+
+        details = []
+        by_category: dict[str, dict] = {}
+
+        for pair in samples:
+            rec = _scan_code_pair(pair, mode=mode)
+            details.append(rec)
+
+            cat = rec["category"]
+            if cat not in by_category:
+                by_category[cat] = {"total": 0, "detected": 0, "skipped": 0}
+            by_category[cat]["total"] += 1
+            if rec.get("skipped"):
+                by_category[cat]["skipped"] += 1
+            elif rec["detected"]:
+                by_category[cat]["detected"] += 1
+
+        total = len(details)
+        detected = sum(1 for r in details if r.get("detected"))
+        skipped = sum(1 for r in details if r.get("skipped"))
+        scannable = total - skipped
+        detection_rate = round(detected / scannable * 100, 1) if scannable > 0 else 0.0
+
+        results[name] = {
+            "status": "ok",
+            "total": total,
+            "detected": detected,
+            "skipped": skipped,
+            "scannable": scannable,
+            "detection_rate": detection_rate,
+            "by_category": by_category,
+            "details": details,
+        }
+        logger.info(
+            "%s: %d/%d detected (%.1f%%), %d skipped",
+            name, detected, scannable, detection_rate, skipped,
+        )
+
+    return results
+
+
+def format_external_report(ext_results: dict) -> str:
+    """Format external benchmark results as a CLI report."""
+    lines = ["", "=" * 70, "  ast-guard External Benchmark Report", "=" * 70]
+
+    for name, data in ext_results.items():
+        lines.append(f"\n  [{name.upper()}]")
+        status = data.get("status", "unknown")
+        if status == "unavailable":
+            lines.append("    Status: not downloaded")
+            continue
+        if status == "error":
+            lines.append(f"    Status: error — {data.get('error', '')}")
+            continue
+
+        total = data["total"]
+        detected = data["detected"]
+        skipped = data["skipped"]
+        scannable = data.get("scannable", total - skipped)
+        rate = data["detection_rate"]
+        lines.append(f"    Total samples:  {total}")
+        lines.append(f"    Scannable:      {scannable}  (skipped: {skipped})")
+        lines.append(f"    Detected:       {detected}/{scannable} ({rate:.1f}%)")
+
+        by_cat = data.get("by_category") or {}
+        if by_cat:
+            lines.append("    By category:")
+            for cat, stats in sorted(by_cat.items()):
+                cat_scan = stats["total"] - stats.get("skipped", 0)
+                cat_rate = (
+                    round(stats["detected"] / cat_scan * 100, 0)
+                    if cat_scan > 0 else 0
+                )
+                lines.append(
+                    f"      {cat}: {stats['detected']}/{cat_scan} ({cat_rate:.0f}%)"
+                )
+
+    lines += ["", "=" * 70, ""]
+    return "\n".join(lines)
+
+
+def export_results(ext_results: dict, out_path: Path) -> None:
+    """Write full results as JSON and a markdown summary table."""
+    # JSON
+    json_path = out_path.with_suffix(".json")
+    json_path.write_text(json.dumps(ext_results, indent=2), encoding="utf-8")
+    logger.info("JSON results written to %s", json_path)
+
+    # Markdown
+    md_path = out_path.with_suffix(".md")
+    rows = ["| Benchmark | Samples | Detected | Detection Rate | Skipped |",
+            "|-----------|---------|----------|---------------|---------|"]
+    for name, data in ext_results.items():
+        if data.get("status") not in ("ok",):
+            rows.append(f"| {name} | — | — | {data.get('status', '?')} | — |")
+            continue
+        scannable = data.get("scannable", data["total"] - data["skipped"])
+        rows.append(
+            f"| {name} | {data['total']} | {data['detected']} "
+            f"| {data['detection_rate']:.1f}% | {data['skipped']} |"
+        )
+    md_content = "# ast-guard External Benchmark Results\n\n" + "\n".join(rows) + "\n"
+    md_path.write_text(md_content, encoding="utf-8")
+    logger.info("Markdown summary written to %s", md_path)
+
+
+# ---------------------------------------------------------------------------
+# CLI report (original, unchanged)
+# ---------------------------------------------------------------------------
+
 def format_cli_report(results, taxonomy):
     """Format results as a human-readable CLI report."""
     lines = []
@@ -290,9 +533,53 @@ def format_cli_report(results, taxonomy):
 def main():
     parser = argparse.ArgumentParser(description="ast-guard benchmark runner")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed check results for missed samples")
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Show detailed check results for missed samples",
+    )
+    parser.add_argument(
+        "--benchmark",
+        metavar="NAME",
+        nargs="+",
+        choices=_BENCHMARK_NAMES + ["all"],
+        help=(
+            "Run external benchmark(s). Choices: "
+            + ", ".join(_BENCHMARK_NAMES)
+            + ", all"
+        ),
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Auto-clone / download benchmark repos before running",
+    )
+    parser.add_argument(
+        "--export",
+        metavar="PATH",
+        help="Export external results to PATH.json and PATH.md",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("strict", "standard", "audit"),
+        default="strict",
+        help="ast-guard scan mode for external benchmarks (default: strict)",
+    )
     args = parser.parse_args()
 
+    if args.benchmark:
+        names = args.benchmark
+        ext_results = run_external_benchmarks(
+            names, download=args.download, mode=args.mode
+        )
+        if args.export:
+            export_results(ext_results, Path(args.export))
+        if args.json:
+            print(json.dumps(ext_results, indent=2))
+        else:
+            print(format_external_report(ext_results))
+        return
+
+    # Original built-in benchmark.
     results = run_benchmark(verbose=args.verbose)
     taxonomy = compute_taxonomy_coverage()
 
