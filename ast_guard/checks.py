@@ -235,7 +235,7 @@ def _is_builtins_reference(node):
                 sub_val = get_subscript_string(node)
                 if sub_val in ("__builtins__", "_builtins_", "builtins"):
                     return True
-    return None
+    return False
 
 def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
     """

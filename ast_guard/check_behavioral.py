@@ -55,7 +55,7 @@ _SAFE_IMPORTS = frozenset({
     "array", "bisect", "heapq", "queue", "pprint", "decimal", "fractions",
     "statistics", "cmath", "numbers", "concurrent", "asyncio", "selectors",
     "code", "codeop", "dis", "token", "tokenize", "keyword", "builtins",
-    "types", "importlib", "pkgutil", "linecache", "site",
+    "types", "pkgutil", "linecache", "site",
     "glob", "fnmatch", "difflib", "getpass", "shlex",
     "configparser", "zipfile", "tarfile", "gzip", "bz2", "lzma", "zlib",
     "uuid", "hmac", "secrets", "ssl", "select",
