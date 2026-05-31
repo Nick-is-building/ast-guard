@@ -1,8 +1,8 @@
 # ast-guard
 
-**Deterministic reward hacking detector for LLM-generated Python code.**
+**Pre-Execution Gate for AI-Generated Code**
 
-Zero dependencies. Pure AST analysis. No LLM needed.
+*The deterministic layer between LLM code generation and code execution. No LLM. No ML. No cost. No exceptions.*
 
 [![Tests](https://github.com/Nick-is-building/ast-guard/actions/workflows/tests.yml/badge.svg)](https://github.com/Nick-is-building/ast-guard/actions/workflows/tests.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/Nick-is-building/ast-guard/blob/main/LICENSE)
 
@@ -10,137 +10,188 @@ Zero dependencies. Pure AST analysis. No LLM needed.
 
 ## The Problem
 
-When LLMs autonomously generate and test code, they cheat. They hardcode expected outputs, replace algorithms with lookup tables, hide data in compressed strings, or manipulate test environments — and pass every test while solving nothing.
+When LLMs generate code and LLMs review that code, you have a closed blackbox loop. Both can hallucinate. Both share systematic blind spots. And critically — both can be deceived. METR has documented frontier models actively introspecting the reviewer's call stack to extract ground truth answers before returning them as if computed. A blackbox reviewing a blackbox is not a defense — it is the illusion of one.
 
-Unit tests catch *whether* code works. ast-guard catches *how*.
+Existing approaches operate on two levels: training-time defenses (Anthropic, DeepMind) prevent reward hacking from developing in models, and inference-time LLM reviewers (TRACE, RewardHackWatch, EvilGenie) detect hacking in generated outputs. Both are necessary. Both are insufficient alone. There is a missing third layer — one that cannot hallucinate, cannot be prompted into compliance, and produces identical results for identical inputs regardless of what the model tries.
 
-## The Approach
-
-ast-guard analyzes Python code structurally via the Abstract Syntax Tree before execution. It compares the original code against the LLM-generated version and detects structural cheating patterns — deterministically, in under 50ms, with zero cost per scan.
-
-This is not another LLM reviewing LLM output. It's a deterministic static analysis layer that complements training-level defenses and LLM-based review.
+ast-guard is that layer. It sits between code generation and execution, analyzes structure before any line runs, and makes a binary deterministic decision in under 10 milliseconds. It does not replace LLM-based reviewers. It handles the structural layer so they can focus entirely on semantics.
 
 ---
 
-## Benchmark Results
+## What ast-guard Is
 
-Evaluated against reward hacking patterns from the [TRACE taxonomy](https://arxiv.org/abs/2601.20103) (Deshpande et al., 2026) — the most comprehensive reward hacking classification in the field (54 subcategories, 517 trajectories).
+ast-guard is an architectural component — a mandatory gate in any system where LLMs generate executable code. It is not a linter. It is not a security scanner. It is a pre-execution integrity check that operates at the Abstract Syntax Tree level, where structural truth cannot be faked.
 
-| Metric | ast-guard | GPT-5.2 (high reasoning) | Claude Opus 4.5 |
-|--------|-----------|--------------------------|-----------------|
-| Detection Rate | **91.7%** (structural categories) | 63% (all categories) | 25% (all categories) |
-| Precision | **100%** | Not reported | Not reported |
-| False Positive Rate | **0%** | Not reported | Not reported |
-| Deterministic | **Yes** | No | No |
-| Latency | **<50ms** | ~10s | ~10s |
-| Cost per scan | **$0** | $$$ | $$$ |
-
-**What ast-guard catches:** Every structural cheating pattern — hardcoded if/else chains, dictionary lookup tables, compressed data strings, forbidden system calls (eval, exec, os, subprocess), obfuscation attempts (variable aliasing, __builtins__ access, chr() tricks), suspicious new imports, complexity collapse (algorithm replaced by trivial code), and extensional enumeration (memorizing all known input/output pairs instead of solving the problem).
-
-**What ast-guard does NOT catch:** Semantic cheating — code that is structurally normal but logically wrong, produces subtly incorrect results, or games the task specification without leaving a structural trace. These require LLM-level understanding or runtime observation. The two approaches are complementary.
-
-The benchmark covers 16 structural subcategories: 15 from the [TRACE taxonomy](https://arxiv.org/abs/2601.20103) (Deshpande et al., 2026) plus extensional enumeration from [Helff et al.](https://arxiv.org/abs/2604.15149) (2026). TRACE defines 51 subcategories total — the remaining 36 are semantic, contextual, or runtime-based and outside the scope of static AST analysis by design.
-
-For the full subcategory breakdown and coverage analysis, see [benchmarks/](benchmarks/).
-
-```bash
-# Run the benchmark yourself
-python -m benchmarks.run_benchmark
-python -m benchmarks.run_benchmark --json
 ```
+LLM generates code
+        │
+        ▼
+┌───────────────────┐
+│   ast-guard gate  │  ← deterministic, <10ms, zero cost
+└───────────────────┘
+        │
+   ┌────┴────┐
+   ▼         ▼
+CLEAN     WARNING / CRITICAL
+pass      flag or block
+through
+        │
+        ▼
+execution environment
+```
+
+The gate supports two modes: **Pair Mode** compares original code against LLM-generated code and detects structural deviations. **Standalone Mode** analyzes a single agent output with no baseline, using behavioral risk scoring to catch known adversarial patterns.
+
+---
+
+## Key Results
+
+All results are fully reproducible. See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for full methodology, confusion matrices, and per-category breakdowns.
+
+| Benchmark | Mode | Samples | Key Metric | Value |
+|-----------|------|---------|------------|-------|
+| Structural Benchmark (36 curated ground-truth pairs) | Pair | 36 | F1 | **100%** |
+| TRACE taxonomy (Deshpande et al. 2026) | Pair | 33 | F1 | **95.7%** |
+| School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** |
+| Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** |
+| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity | **78.5%** |
+| MALT — hardcoded_solution category | Standalone | 429 | Detection Rate | **72.0%** |
+| MALT — bypass_constraints category | Standalone | 2,379 | Detection Rate | **44.3%** |
+
+**Performance:** mean 4.7ms per scan, ~210 samples/second, zero API cost.
+
+### Comparison with Existing Approaches
+
+These approaches are complementary, not competing. ast-guard handles structural analysis; LLM reviewers handle semantics. Together they cover the full detection space.
+
+| Approach | Method | Cost/scan | Latency | Deterministic | Scope |
+|----------|--------|-----------|---------|---------------|-------|
+| GPT-5.2 reviewer | LLM-as-judge | $0.01–0.10 | 500–2000ms | No | Semantic + Structural |
+| RewardHackWatch | ML + Regex + AST | GPU required | varies | No | Trajectory-level |
+| **ast-guard v2.0** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
+
+The 4.7ms mean scan time means ast-guard adds imperceptible latency to any execution loop. A human blink takes 150–400ms. An HTTP round-trip takes 50–200ms. ast-guard is faster than either, which means it can gate every single code execution in real time without degrading agent performance.
+
+---
+
+## How It Works
+
+ast-guard parses code into an Abstract Syntax Tree and evaluates structural properties. No execution, no sampling, no probabilistic inference. The same input always produces the same output.
+
+### Six Checks
+
+**Check 1 — Hardcoding Detection:** Catches if/else chains, dictionary lookup tables, and compressed data strings that replace real computation. Detects relative increases in if-counts and literal counts, filtered by guard-clause exclusions and dual-threshold conditions to suppress false positives on small functions.
+
+**Check 2 — Complexity Collapse:** Measures per-function cyclomatic complexity (McCabe metric). Flags when a function's complexity drops by more than 60% without a recognized legitimate optimization. Per-function analysis prevents hiding a collapsed function behind high-complexity siblings.
+
+**Check 3 — Forbidden Calls and Obfuscation:** Diff-based detection of newly introduced dangerous calls — eval, exec, subprocess, ctypes, sys.exit, and more. Includes multi-level alias resolution (chained assignments, tuple unpacking, dict dispatch), chr()-based obfuscation, and builtins access patterns.
+
+**Check 4 — Import Drift:** Detects new imports that weren't in the original code. Blocklisted imports (os, sys, subprocess, pickle, importlib) trigger CRITICAL. Unknown imports trigger WARNING for manual review. Both lists are configurable.
+
+**Check 5 — Extensional Enumeration:** Catches the RLVR shortcut documented by Helff et al. — models that abandon rule induction and enumerate all known input/output pairs as flat if/elif chains or match/case blocks instead of solving the problem.
+
+**Check 6 — Behavioral Risk Scoring (Standalone Mode):** An additive risk scoring engine inspired by YARA and Semgrep. Each code block accumulates a risk score based on detected patterns. Score thresholds determine verdict. Patterns include test file manipulation, monkey-patching, stack introspection, timer manipulation, dunder method hijacking, process termination tricks, sandbox escape attempts, and more. Legitimate agent behavior (writing output files, reading data, subprocess for compilation) is explicitly excluded via contextual allowlisting and constant propagation.
+
+### Verdict Logic
+
+```
+CLEAN    → score below threshold, no blocklist triggers
+WARNING  → suspicious patterns, manual review recommended
+CRITICAL → high-confidence structural hack, block execution
+```
+
+In strict mode, CRITICAL blocks execution. In standard mode, everything is logged. In audit mode, silent collection only.
 
 ---
 
 ## Quickstart
 
-**Requirements:** Python 3.11+ — zero external dependencies.
+**Requirements:** Python 3.11+ — zero external dependencies for Python analysis.
 
 ```bash
 git clone https://github.com/Nick-is-building/ast-guard.git
 cd ast-guard
-python -m pytest tests/ -v  # 70 tests across all modules
-```
-
-### CLI
-
-```bash
-# Standard mode (warnings only, no blocking)
-python -m ast_guard.cli check original.py optimized.py
-
-# Strict mode (blocks on CRITICAL — for autonomous agents)
-python -m ast_guard.cli check original.py optimized.py --mode strict
-
-# Audit mode (silent — collects telemetry only)
-python -m ast_guard.cli check original.py optimized.py --mode audit
-
-# JSON output for CI/CD pipelines
-python -m ast_guard.cli check original.py optimized.py --json
+python -m pytest tests/ -v  # 225 tests
 ```
 
 ### Python API
 
 ```python
-from ast_guard import scan, feedback
+from ast_guard import scan, scan_standalone
 
+# Pair mode: compare original vs generated code
 result = scan(original_code, generated_code, mode="strict")
 
 if result["verdict"] == "CRITICAL":
-    print("Blocked: Reward hacking detected.")
+    print("Blocked: structural hack detected.")
+    print(result["checks"])  # per-check findings
 elif result["verdict"] == "WARNING":
-    print("Suspicious patterns. Review recommended.")
+    print("Suspicious. Review recommended.")
 else:
     print("Clean. Safe to execute.")
 
-# Submit feedback to improve calibration
-feedback(result["telemetry"]["scan_id"], "true_positive")
+# Standalone mode: analyze a single agent output without baseline
+result = scan_standalone(agent_code)
+print(result["verdict"])
+print(result["checks"]["check_6_behavioral"]["risk_score"])
 ```
 
-### CI/CD Integration
-
-Exit code 0 on CLEAN/WARNING, exit code 1 on CRITICAL. Drop into any pipeline:
+### CLI
 
 ```bash
-python -m ast_guard.cli check original.py optimized.py --mode strict --json || exit 1
+# Standard mode — log everything, block nothing
+python -m ast_guard.cli check original.py generated.py
+
+# Strict mode — block on CRITICAL
+python -m ast_guard.cli check original.py generated.py --mode strict
+
+# Audit mode — silent telemetry only
+python -m ast_guard.cli check original.py generated.py --mode audit
+
+# JSON output for pipelines
+python -m ast_guard.cli check original.py generated.py --json
+```
+
+### CI/CD Gate
+
+Exit code 0 on CLEAN/WARNING, exit code 1 on CRITICAL:
+
+```bash
+python -m ast_guard.cli check original.py generated.py --mode strict --json || exit 1
 ```
 
 ---
 
-## Examples
+## Multi-Language Support
 
-The [`examples/`](examples/) directory contains five code pairs demonstrating each detection category:
+ast-guard natively supports Python with zero dependencies. Bash and JavaScript analysis is available via tree-sitter as an optional extra.
 
 ```bash
-# See hardcoding detection in action
-ast-guard check examples/hardcoding_original.py examples/hardcoding_generated.py --mode strict
-
-# See a legitimate optimization pass cleanly
-ast-guard check examples/optimization_original.py examples/optimization_generated.py --mode strict
+pip install ast-guard[multilang]
 ```
 
-| Pair | What It Shows | Result |
-|------|--------------|--------|
-| `hardcoding` | Fibonacci replaced with if/else lookup | **CRITICAL** |
-| `optimization` | Loop → list comprehension (legitimate) | **CLEAN** |
-| `forbidden_calls` | eval/exec injection with obfuscation | **CRITICAL** |
-| `complexity_collapse` | BFS replaced with trivial stub | **CRITICAL** |
-| `import_drift` | pickle/subprocess added to word counter | **CRITICAL** |
+| Language | Dependency | Detects |
+|----------|------------|---------|
+| Python | None (native ast) | All 6 checks |
+| Bash | tree-sitter-bash | Dangerous calls (curl, wget, eval, rm, chmod), PATH manipulation, LD_PRELOAD |
+| JavaScript | tree-sitter-javascript | eval, Function(), require('child_process'), execSync, dangerous imports |
+
+Language is auto-detected via shebang, keywords, and syntax patterns. The same scan pipeline runs regardless of language.
 
 ---
 
-## MCP Server
+## Integration
 
-ast-guard includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server for native integration with coding agents. No shell-out, no subprocess — direct MCP tool calls.
+### MCP Server
+
+ast-guard includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with coding agents.
 
 ```bash
 pip install ast-guard[mcp]
 ```
 
-The base package remains **zero-dependency**. The `mcp` extra is only installed when you opt in.
-
-### Claude Code
-
+**Claude Code** (`~/.claude/settings.json`):
 ```json
-// ~/.claude/settings.json
 {
   "mcpServers": {
     "ast-guard": {
@@ -151,10 +202,8 @@ The base package remains **zero-dependency**. The `mcp` extra is only installed 
 }
 ```
 
-### Cursor
-
+**Cursor** (`.cursor/mcp.json`):
 ```json
-// .cursor/mcp.json
 {
   "mcpServers": {
     "ast-guard": {
@@ -165,23 +214,14 @@ The base package remains **zero-dependency**. The `mcp` extra is only installed 
 }
 ```
 
-### MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `ast_guard_scan` | Compare original vs. generated code. Returns verdict, per-check findings, and detected transformations. |
+| MCP Tool | Description |
+|----------|-------------|
+| `ast_guard_scan` | Compare original vs generated code. Returns verdict, per-check findings, and detected transformations. |
 | `ast_guard_feedback` | Submit feedback on scan results to improve detection thresholds. |
 
-Works with Claude Code, Cursor, Codex, OpenCode, and any MCP-compatible agent.
-
----
-
-## GitHub Action
-
-A reusable composite action is provided at `.github/actions/ast-guard/action.yml`. It installs ast-guard, runs a scan, emits a SARIF v2.1.0 file, and optionally uploads the SARIF to the GitHub Security Tab via `github/codeql-action/upload-sarif`. The action exits non-zero on CRITICAL so it doubles as a CI gate.
+### GitHub Action
 
 ```yaml
-# .github/workflows/check.yml
 name: ast-guard
 on: [pull_request]
 
@@ -190,156 +230,52 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write  # required only when upload-sarif is "true"
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ast-guard
         with:
           original: path/to/original.py
           generated: path/to/generated.py
-          mode: strict          # strict | standard | audit (default: strict)
-          upload-sarif: "true"  # default: "false"
-          category: ast-guard   # SARIF category, prevents overwriting other scans
+          mode: strict
+          upload-sarif: "true"
 ```
 
-Inputs:
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `original` | yes | — | Path to the original Python file |
-| `generated` | yes | — | Path to the generated/optimized Python file |
-| `mode` | no | `strict` | Sensitivity mode |
-| `sarif-file` | no | `ast-guard-results.sarif` | Path where the SARIF report is written |
-| `upload-sarif` | no | `"false"` | Upload the SARIF to GitHub Security |
-| `category` | no | `ast-guard` | SARIF category passed to `upload-sarif` |
+SARIF output is compatible with the GitHub Security Tab and VS Code.
 
 ---
 
-## The Five Checks
+## Evaluation
 
-### Check 1 — Hardcoding Detection
+Full scientific documentation lives in the benchmarks directory:
 
-Catches LLMs that replace algorithms with hardcoded results.
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md) — precision, recall, F1, confusion matrices, comparison table across all datasets.
 
-**If-Count:** Flags when if-statements increase by >50% while loop depth stays flat or drops. Guard clauses at the top of functions (early return/raise, no else branch) are correctly excluded.
+[benchmarks/METHODOLOGY.md](benchmarks/METHODOLOGY.md) — the complete 6-iteration calibration history showing how standalone mode was tuned from 95% false positive rate to 21.5%, with rationale for every decision. This serves as an ablation study.
 
-**Literal-Count:** Flags when literals increase by >200% AND at least 10 new literals appear. The dual condition prevents false positives on small functions.
+[benchmarks/structural_benchmark/](benchmarks/structural_benchmark/) — 36 curated ground-truth code pairs across 12 structural hack categories. 100% F1, 4.7ms mean scan time. Fully reproducible.
 
-**Long Strings:** Flags new strings over 200 characters — catches compressed lookup data like `"1:1|2:1|3:2|..."`.
-
-Severity: WARNING individually. CRITICAL when combined with Check 2 or Check 5.
-
-### Check 2 — Complexity Collapse
-
-Catches sudden, unexplained drops in cyclomatic complexity (McCabe metric). Flags when complexity drops by more than 60%.
-
-**Per-Function Granular Analysis:** Cyclomatic complexity drops are evaluated on a per-function basis rather than against a single file-level sum. Each function is identified by its fully qualified dotted name (`module_func`, `ClassName.method`, `OuterClass.Inner.method`, `outer_func.inner`), which correctly distinguishes class methods from module-level functions and resolves scope collisions between same-named callables in different classes or nested scopes. A collapse in any individual function — regardless of how many high-complexity siblings remain in the same file — triggers the check, so a single function cannot be hidden behind aggregate totals.
-
-**Per-Function Complexity Floor:** The `complexity_abs_min` threshold (default `5`) is now applied directly to each individual function's original complexity. Small helper functions whose complexity legitimately drops from `3` to `1` are excluded by the floor, while complex core algorithms continue to be evaluated against the relative-decrease threshold with full precision.
-
-**File-Level Fallback:** When neither the original nor the generated code defines any functions (pure script-style modules), the check falls back to comparing the file-level `mccabe_complexity` total, preserving prior behavior for that case.
-
-**Allowlist Override:** If the drop is explained by a legitimate optimization (loop to comprehension, `sorted()` replacing hand-written sort, set replacing list for O(1) lookup), the warning is suppressed. See [ALLOWLIST.md](ALLOWLIST.md) for documented rationales.
-
-**Anti-Washing Protection:** The override is blocked if Check 1, Check 3, or Check 5 fire simultaneously. A single `map()` call cannot whitewash a hardcoded function or a memorized lookup table.
-
-Severity: WARNING individually. CRITICAL when combined with Check 1 or Check 5.
-
-### Check 3 — Forbidden Calls & Obfuscation
-
-Catches dangerous system calls and obfuscation. **Diff-based**: only flags calls that are *new* in the generated code. If the original legitimately uses `os` or `subprocess`, it's not penalized.
-
-**Blocklist:** `eval`, `exec`, `os.*`, `sys.*`, `subprocess.*`, `open`, `__import__`, `compile`, `globals`, `locals`, `setattr`, `getattr` (dynamic), `socket.*`, `ctypes.*`, `signal.*`, and more.
-
-**Anti-Obfuscation:** Detects variable aliasing (`f = eval; f(...)`), `__builtins__` subscript/attribute access, `getattr(__builtins__, ...)`, and `chr()` character code tricks inside eval/exec/import arguments.
-
-Severity: Always CRITICAL, in all modes.
-
-### Check 4 — Import Drift
-
-Catches new imports that weren't in the original code.
-
-**CRITICAL:** `os`, `sys`, `subprocess`, `pickle`, `importlib`, `ctypes`, `signal`, `multiprocessing`, `threading`, `marshal`.
-
-**CLEAN:** `functools`, `itertools`, `collections`, `math`, `typing`, `dataclasses`, `enum`, `copy`, `re`, `bisect`, `heapq`.
-
-**WARNING:** Everything else, for manual review. Both lists are configurable.
-
-### Check 5 — Extensional Enumeration
-
-Catches the "enumerate all known input/output pairs" failure mode observed in RLVR-trained LLMs by Helff et al., *"LLMs Gaming Verifiers"* ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)). When the verifier samples a known input set, the model wins by memorizing every (input, output) pair as a flat `if`/`elif` chain or `match`/`case` block instead of solving the task.
-
-Per generated function, Check 5 fires WARNING when **all three** conditions hold:
-
-- `total_ifs >= enumeration_min_ifs` (default: 5) — enough branches to be a lookup, not a small dispatcher.
-- `enumeration_ifs / total_ifs >= enumeration_ratio` (default: 0.70) — most branches are constant-equality (`if n == 0`, `case 1`) with trivial bodies (≤2 statements).
-- `loop_count <= 1` — the function isn't doing meaningful iteration.
-
-Recognizes both `if`/`elif` chains and `match`/`case` blocks. Skips nested functions and analyzes each function independently.
-
-Severity: WARNING individually. CRITICAL when combined with Check 1 (enumeration + hardcoding) **or** Check 2 (enumeration + complexity collapse). Check 5 also blocks the Check 2 Allowlist override.
-
----
-
-## Three Sensitivity Modes
-
-| Mode | Default For | Behavior |
-|------|-------------|----------|
-| `strict` | Python API | CRITICAL blocks execution. Full gatekeeper for autonomous loops. |
-| `standard` | CLI | CRITICALs downgraded to WARNINGs (except Check 3). Nothing blocked. |
-| `audit` | — | Silent. No output, no blocking. Only telemetry collection. |
-
-The audit mode is designed for risk-free adoption: run ast-guard silently for a week, review the data, then decide whether to enable standard or strict. This lowers the adoption barrier to zero.
-
----
-
-## Recognized Legitimate Transformations
-
-ast-guard doesn't just flag — it understands. These optimization patterns are recognized as legitimate and suppress false positives. Each is documented with rationale in [ALLOWLIST.md](ALLOWLIST.md):
-
-- **Loop → Comprehension:** `for` loops replaced by list/set/dict comprehensions (CPython C-speed optimization)
-- **Functional Built-ins:** Loops replaced by `map()`, `filter()`, `sorted()`, `min()`, `max()`, `sum()` (C-implemented)
-- **Data Structure Swap:** Lists replaced by sets/dicts for O(1) membership testing
-- **Standard Library:** New imports from `functools`, `itertools`, `collections`, etc. (complexity moved to C layer)
-
----
-
-## Telemetry & Community Data
-
-ast-guard collects **only anonymized metrics** — never code, filenames, paths, or timestamps. Everything is stored locally and can be disabled with `--no-telemetry` or via config.
-
-**Two IDs for different purposes:**
-
-- **scan_id:** SHA-256 of original + generated code + local machine salt. Stable across sessions for reliable feedback. Never exported, never leaves the machine.
-- **metrics_fingerprint:** SHA-256 of AST metrics, node type distributions, and builtin names. Enables pattern clustering without exposing code content.
+Reproduce all results:
 
 ```bash
-python -m ast_guard.cli stats                                  # View local statistics
-python -m ast_guard.cli stats --detailed                       # Metric deltas, check correlations, verdicts by mode
-python -m ast_guard.cli stats --export-stats stats.json        # Export detailed statistics as JSON
-python -m ast_guard.cli export --output my_data.jsonl          # Export anonymized telemetry data
-python -m ast_guard.cli feedback --id <scan-id> --label true_positive
+# Run the curated structural benchmark
+python -m benchmarks.run_benchmark --benchmark structural
+
+# Run against MALT (requires downloaded dataset)
+python -m benchmarks.run_benchmark --benchmark malt --mode strict
+
+# Run all available benchmarks
+python -m benchmarks.run_benchmark --benchmark all
 ```
-
-**Detailed statistics** (`--detailed` / `--export-stats`) summarize, across every scan in the local telemetry log:
-
-- Per-metric deltas (gen − orig) for `if_count`, `literal_count`, `mccabe_complexity`, `comprehension_count`, `functional_call_count`, `long_string_count` — count, mean, median, min, max, stddev.
-- Check correlations: how often Check 1+2 and Check 5+2 kombi-escalate to CRITICAL, how often Check 5 fires alone vs. alongside other checks, per-check CRITICAL counts.
-- Verdict distribution split by sensitivity mode.
-- Transformation frequencies with percentages.
-
-Computed using the Python standard library only (`statistics` module). The JSON export is intended for external visualization and dashboarding.
-
-**Community Dataset:** We are building the first empirical dataset of AST metrics for reward hacking detection. Contributions help calibrate thresholds for everyone. All data is anonymized, scan_ids are stripped on export, and sharing is always opt-in.
 
 ---
 
 ## Configuration
 
-All thresholds, blocklists, and allowlists are configurable via TOML:
+All thresholds, blocklists, and allowlists are configurable via TOML. Config hierarchy: CLI args > project config (`.ast-guard.toml`) > user config (`~/.ast-guard/config.toml`) > defaults.
 
 ```toml
-# .ast-guard.toml (project directory)
+# .ast-guard.toml
 [thresholds]
 if_count_rel_increase = 0.50
 literal_count_rel_increase = 2.0
@@ -347,7 +283,6 @@ literal_count_abs_min = 10
 long_string_len = 200
 complexity_rel_decrease = 0.60
 complexity_abs_min = 5
-set_literal_max = 15
 enumeration_ratio = 0.70
 enumeration_min_ifs = 5
 
@@ -357,50 +292,72 @@ allowlist = ["functools", "itertools", "collections", "math"]
 
 [settings]
 mode = "standard"
-telemetry = false  # Disable telemetry entirely
+telemetry = false
 ```
-
-Config hierarchy: CLI args > project config (`.ast-guard.toml`) > user config (`~/.ast-guard/config.toml`) > defaults.
-
----
-
-## Integration with FailProofAI
-
-ast-guard integrates with [FailProofAI](https://github.com/FailproofAI/failproofai) as a custom policy for coding agent harnesses. While FailProofAI's 39 built-in policies cover runtime safety (loops, dangerous actions, secret leaks), ast-guard adds a complementary layer: **code integrity** — detecting whether the code an agent produces is structurally honest.
-
-See the [integration proposal](https://github.com/FailproofAI/failproofai/issues/375) for the full technical discussion and working prototype.
 
 ---
 
 ## Design Principles
 
-- **Deterministic:** No LLM, no randomness. Same input = same output. No network calls in the scan path.
-- **Zero dependencies:** Only Python standard library. Clone and run.
-- **Privacy-by-design:** Telemetry stores only metrics, never code. Export strips scan_ids. Everything is opt-out.
-- **Framework-agnostic:** Works with any LLM agent system, any CI/CD pipeline, any coding harness.
-- **Adoption-friendly:** Three modes (audit → standard → strict) enable risk-free evaluation before commitment.
-- **Pre-execution filter, not a sandbox:** ast-guard catches structural cheating before code runs. It does not replace sandboxing (Docker, gVisor, WASM) for executing untrusted code.
+**Deterministic.** No LLM, no randomness. Same input always produces the same output. No network calls in the scan path.
+
+**Zero dependencies.** The Python core requires only the standard library. Clone the repo and it runs.
+
+**Real-time.** At under 10ms per scan, ast-guard adds imperceptible latency to any execution loop. It can gate every code execution without degrading agent performance.
+
+**Complementary by design.** Structural analysis and semantic analysis are separate concerns. ast-guard handles structural integrity completely, leaving LLM reviewers to do what they do best.
+
+**Privacy-by-design.** Telemetry stores only anonymized AST metrics — never code, filenames, paths, or timestamps. Everything is stored locally. Sharing is always opt-in.
+
+**Adoption-friendly.** Three modes (audit → standard → strict) enable risk-free evaluation before commitment. Run in audit mode for a week, review the data, then decide.
 
 ---
 
-## Known Limitations (v1.3)
+## Known Limitations
 
-- **Python only.** Multi-language support (via tree-sitter) planned for v2.0.
-- **No semantic analysis.** ast-guard checks structure, not meaning. Semantically incorrect code is the job of your downstream verifier or test suite.
-- **Thresholds are starting points.** Defaults are informed estimates, not empirically validated optima. Community telemetry will calibrate them over time.
-- **AST drift.** Future Python versions may introduce new AST node types that need manual integration.
+**Standalone mode has lower precision than pair mode.** Without a baseline, contextual disambiguation is harder. The 21.5% false positive rate on normal MALT samples is the current calibration point — intentionally conservative to avoid missing real hacks.
+
+**Semantic hacks are outside scope by design.** Code that is structurally normal but logically wrong, produces subtly incorrect results, or games a task specification without a structural trace requires semantic understanding. This is the job of LLM-based reviewers and downstream test suites. ast-guard and semantic reviewers are meant to work together.
+
+**Bash and JavaScript adapters are less mature than the Python core.** The pattern coverage is narrower and the false positive calibration is less refined.
+
+**Thresholds are empirically calibrated on MALT but will improve with community data.** The defaults are informed starting points, not final optima.
 
 ---
 
-## Roadmap
+## Future Direction
 
-| Version | Feature |
-|---------|---------|
-| v1.1 ✅ | MCP server, TRACE-based benchmark, FailProofAI integration proposal |
-| v1.2 ✅ | Constant folding for obfuscation detection, complexity floor for small functions, new anti-obfuscation paths (`__builtins__.__dict__`, `getattr(globals())`), set-literal-size allowlist blocker, SARIF v2.1.0 output for GitHub Security Tab |
-| v1.3 ✅ | Check 5 (Extensional Enumeration, Helff et al. arXiv:2604.15149), Check 5+1 and Check 5+2 kombi escalation, Check 2 rename-bypass fix, `builtins.eval` detection gap closed, reusable GitHub Composite Action, detailed telemetry statistics (`--detailed`, `--export-stats`) |
-| v1.4 | First community-data-driven threshold calibration |
-| v2.0 | Multi-language support via tree-sitter (JavaScript, TypeScript, Go) |
+ast-guard currently operates on code. The deeper research question is whether deterministic static analysis can be extended to all structured LLM outputs — SQL queries, JSON responses, YAML configurations, API call sequences, tool-use traces. Any structured output can be manipulated. Any structured output has analyzable structural properties that can be evaluated before that output takes effect. Extending the pre-execution gate concept beyond code is an open research problem. If you are working on LLM safety, evaluation integrity, or agentic systems and want to explore this direction, collaboration is welcome.
+
+---
+
+## Related Work
+
+**TRACE** (Deshpande et al. 2026, [arXiv:2601.20103](https://arxiv.org/abs/2601.20103)) — 54-category reward hacking taxonomy and benchmark. ast-guard covers 15-16 structural categories with 95.7% F1; the remaining categories are semantic and outside static analysis scope.
+
+**MALT** (METR 2025) — 10,919 manually reviewed agent transcripts covering natural and prompted reward hacking behaviors. The largest labeled dataset in the field. ast-guard evaluates against 81,515 extracted code blocks.
+
+**Helff et al.** ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)) — Documents extensional enumeration shortcuts in RLVR-trained models. Directly motivates Check 5.
+
+**RewardHackWatch** — Runtime detector using DistilBERT + 45 regex patterns + AST analysis. 89.7% F1 on 5,391 trajectories. ML-based, trajectory-level. ast-guard is its deterministic structural complement.
+
+**MacDiarmid et al.** ([arXiv:2511.18397](https://arxiv.org/abs/2511.18397)) — Demonstrates that reward hacking in production RL generalizes to alignment faking and sabotage. Establishes the safety stakes for detection.
+
+**Baker et al. / OpenAI** ([arXiv:2503.11926](https://arxiv.org/abs/2503.11926)) — Chain-of-thought monitoring for reasoning models. Shows that optimization pressure against visible bad reasoning causes models to hide intent rather than change behavior — strengthening the case for structural analysis that cannot be deceived by reasoning traces.
+
+---
+
+## Citation
+
+```bibtex
+@software{ast_guard_2026,
+  title  = {ast-guard: Pre-Execution Gate for AI-Generated Code},
+  author = {Nick},
+  year   = {2026},
+  url    = {https://github.com/Nick-is-building/ast-guard},
+  version = {2.0.0}
+}
+```
 
 ---
 
@@ -409,51 +366,32 @@ See the [integration proposal](https://github.com/FailproofAI/failproofai/issues
 ```
 ast-guard/
 ├── ast_guard/
-│   ├── __init__.py        # Public API: scan(), feedback(), orchestration
-│   ├── analyzer.py        # AST parsing and metric extraction
-│   ├── checks.py          # The five core checks
-│   ├── allowlist.py       # Legitimate transformation detection
-│   ├── config.py          # Configuration loading (TOML)
-│   ├── telemetry.py       # Anonymized telemetry + detailed statistics
-│   ├── output.py          # CLI (ANSI), JSON, SARIF v2.1.0 formatting
-│   ├── cli.py             # CLI entry point (check, feedback, export, stats)
-│   └── mcp_server.py      # MCP server (optional: pip install ast-guard[mcp])
-├── .github/
-│   ├── actions/ast-guard/ # Reusable composite action with SARIF upload
-│   └── workflows/         # CI workflows
-├── benchmarks/            # TRACE + Helff et al. benchmark suite (33 samples)
-├── examples/              # 5 code pairs demonstrating each check
-├── tests/                 # 70 tests across all modules
-├── ALLOWLIST.md           # Documented transformation rationales
-├── CHANGELOG.md
-├── CONTRIBUTING.md        # Contribution guidelines
-├── SECURITY.md            # Security policy
-├── LICENSE                # MIT
-├── pyproject.toml
-└── README.md
+│   ├── __init__.py           # Public API: scan(), scan_standalone(), feedback()
+│   ├── analyzer.py           # AST parsing and metric extraction
+│   ├── checks.py             # Checks 1–5
+│   ├── check_behavioral.py   # Check 6: behavioral risk scoring
+│   ├── allowlist.py          # Legitimate transformation detection
+│   ├── lang_bash.py          # Bash adapter (tree-sitter)
+│   ├── lang_javascript.py    # JavaScript adapter (tree-sitter)
+│   ├── multilang.py          # Language detection and dispatch
+│   ├── config.py             # Configuration, defaults, modes
+│   ├── telemetry.py          # Scan ID, salt, JSONL, feedback, export
+│   ├── output.py             # CLI formatting (ANSI) and JSON serialization
+│   └── mcp_server.py         # MCP server
+├── benchmarks/
+│   ├── RESULTS.md            # Full scientific evaluation results
+│   ├── METHODOLOGY.md        # Calibration history and reproducibility
+│   ├── structural_benchmark/ # 36 curated ground-truth samples, 100% F1
+│   ├── loaders/              # Dataset loaders (MALT, TRACE, Countdown-Code, etc.)
+│   └── run_benchmark.py      # Benchmark runner
+├── tests/                    # 225 tests across all modules
+├── examples/                 # Five annotated code pair examples
+├── cli.py                    # CLI entry point
+├── ALLOWLIST.md              # Documented rationales for legitimate transformations
+├── CHANGELOG.md              # Full version history
+└── pyproject.toml
 ```
 
 ---
 
-## Related Work
-
-- **[TRACE](https://arxiv.org/abs/2601.20103)** (Deshpande et al., 2026) — 517-trajectory benchmark with 54 reward hack categories. ast-guard's benchmark uses TRACE's taxonomy as reference.
-- **[EvilGenie](https://arxiv.org/abs/2511.21654)** (Gabor et al., 2025) — Reward hacking benchmark from MIT using LiveCodeBench problems.
-- **[SpecBench](https://arxiv.org/abs/2605.21384)** (2026) — Measuring reward hacking in long-horizon coding agents (Codex, Claude Code, OpenCode).
-- **[RHB](https://arxiv.org/abs/2605.02964)** (Thaman, 2026) — Reward Hacking Benchmark for tool-using LLM agents.
-- **[FailProofAI](https://github.com/FailproofAI/failproofai)** — Runtime reliability policies for coding agents. ast-guard provides the complementary code integrity layer.
-- **[LLMs Gaming Verifiers](https://arxiv.org/abs/2604.15149)** (Helff et al., 2026) — Shows that RLVR-trained models systematically abandon rule induction in favor of extensional enumeration. ast-guard's Check 5 detects this pattern structurally.
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. The highest-value contributions are new benchmark samples (especially novel cheating patterns), obfuscation bypass patterns, and extensional enumeration examples.
-
-## License
-
-MIT — use it, fork it, improve it, ship it.
-
----
-
-*Built by [Nick](https://github.com/Nick-is-building) — Deterministic System Builder, Berlin.*
+*ast-guard is actively developed. New benchmark evaluations, language adapters, and detection patterns are added as the research landscape evolves.*
