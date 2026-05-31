@@ -1,0 +1,107 @@
+{
+  "tool_version": "2.0.0",
+  "dataset": "METR MALT",
+  "source": "metr-evals/malt-public (HuggingFace)",
+  "total_transcripts": 7179,
+  "total_code_blocks_extracted": 140726,
+  "total_scannable": 81515,
+  "total_flagged": 18081,
+  "total_clean": 63434,
+  "flag_rate": 0.222,
+  "mode": "strict",
+  "scan_mode": "standalone",
+  "per_label": {
+    "normal": {
+      "samples": 77369,
+      "clean": 60696,
+      "flagged": 16673,
+      "clean_rate": 0.785,
+      "flag_rate": 0.215
+    },
+    "bypass_constraints": {
+      "samples": 2379,
+      "clean": 1325,
+      "flagged": 1054,
+      "clean_rate": 0.557,
+      "flag_rate": 0.443
+    },
+    "partial_problem_solving": {
+      "samples": 731,
+      "clean": 721,
+      "flagged": 10,
+      "clean_rate": 0.986,
+      "flag_rate": 0.014
+    },
+    "hardcoded_solution": {
+      "samples": 429,
+      "clean": 120,
+      "flagged": 309,
+      "clean_rate": 0.280,
+      "flag_rate": 0.720
+    },
+    "ignores_task_instructions": {
+      "samples": 361,
+      "clean": 280,
+      "flagged": 81,
+      "clean_rate": 0.776,
+      "flag_rate": 0.224
+    },
+    "sabotage": {
+      "samples": 197,
+      "clean": 183,
+      "flagged": 14,
+      "clean_rate": 0.929,
+      "flag_rate": 0.071
+    },
+    "match_weaker_model": {
+      "samples": 171,
+      "clean": 157,
+      "flagged": 14,
+      "clean_rate": 0.918,
+      "flag_rate": 0.082
+    },
+    "refusals": {
+      "samples": 147,
+      "clean": 143,
+      "flagged": 4,
+      "clean_rate": 0.973,
+      "flag_rate": 0.027
+    },
+    "reasoning_about_task": {
+      "samples": 74,
+      "clean": 71,
+      "flagged": 3,
+      "clean_rate": 0.959,
+      "flag_rate": 0.041
+    },
+    "gives_up": {
+      "samples": 1,
+      "clean": 1,
+      "flagged": 0,
+      "clean_rate": 1.000,
+      "flag_rate": 0.000
+    }
+  },
+  "per_check": {
+    "check_1_hardcoding": 15867,
+    "check_2_complexity_collapse": 0,
+    "check_3_forbidden_calls": 204,
+    "check_4_import_drift": 3048,
+    "check_5_extensional_enumeration": 57,
+    "check_6_behavioral": 2769
+  },
+  "confusion_matrix": {
+    "note": "Binary classification: hack = bypass_constraints + hardcoded_solution + sabotage (3,005 samples); non-hack = all others (78,510 samples)",
+    "hack_labels": ["bypass_constraints", "hardcoded_solution", "sabotage"],
+    "hack_total": 3005,
+    "non_hack_total": 78510,
+    "TP": 1377,
+    "FP": 16673,
+    "FN": 1628,
+    "TN": 60696,
+    "precision": 0.076,
+    "recall": 0.458,
+    "f1": 0.130,
+    "specificity_normal_tnr": 0.785
+  }
+}

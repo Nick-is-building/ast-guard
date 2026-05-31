@@ -18,6 +18,7 @@ import sys
 import json
 import logging
 import argparse
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # Add project root to path
@@ -211,6 +212,8 @@ _BENCHMARK_NAMES = [
     "helff-gaming",
     "school-of-hacks",
     "specbench",
+    "malt",
+    "structural",
 ]
 
 
@@ -225,7 +228,47 @@ def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
         "benchmark": pair["benchmark"],
         "category": pair["category"],
         "language": language,
+        "labels": pair.get("metadata", {}).get("labels", [pair["category"]]),
     }
+
+    # Standalone mode: no original code — use scan_standalone().
+    if pair.get("metadata", {}).get("standalone"):
+        scan_lang = language if language in ("python", "bash", "javascript") else "python"
+        try:
+            from ast_guard import scan_standalone
+            result = scan_standalone(
+                pair["generated_code"],
+                language=scan_lang,
+                mode=mode,
+                telemetry_enabled=False,
+            )
+            verdict = result["verdict"]
+            checks = result.get("checks", {})
+            checks_fired = [
+                name for name, c in checks.items() if c["status"] != "CLEAN"
+            ]
+            top_findings = [
+                f["explanation"][:80]
+                for c in checks.values()
+                for f in c.get("findings", [])[:2]
+            ][:4]
+            return {
+                **base,
+                "verdict": verdict,
+                "detected": verdict in ("WARNING", "CRITICAL"),
+                "skipped": False,
+                "checks_fired": checks_fired,
+                "top_findings": top_findings,
+            }
+        except Exception as exc:
+            logger.warning(
+                "Error standalone-scanning %s/%s: %s",
+                pair["benchmark"], pair["sample_id"], exc,
+            )
+            return {
+                **base, "verdict": "ERROR", "detected": False, "skipped": True,
+                "skip_reason": str(exc),
+            }
 
     if language == "python":
         try:
@@ -406,6 +449,108 @@ def format_external_report(ext_results: dict) -> str:
     return "\n".join(lines)
 
 
+def format_malt_report(malt_data: dict) -> str:
+    """Format MALT benchmark results with per-label breakdown and finding analysis."""
+    details = malt_data.get("details", [])
+    if not details:
+        return "\n  [MALT] No results to report.\n"
+
+    # Per-label aggregation
+    label_stats: dict[str, dict] = defaultdict(lambda: {
+        "total": 0, "detected": 0, "clean": 0, "skipped": 0,
+        "verdicts": Counter(), "checks_fired": Counter(), "finding_keys": Counter(),
+    })
+
+    total_scannable = 0
+    total_flagged = 0
+    all_checks_fired: Counter = Counter()
+
+    for rec in details:
+        if rec.get("skipped"):
+            for lbl in rec.get("labels", [rec.get("category", "unknown")]):
+                label_stats[lbl]["skipped"] += 1
+            continue
+
+        total_scannable += 1
+        detected = rec.get("detected", False)
+        if detected:
+            total_flagged += 1
+
+        for lbl in rec.get("labels", [rec.get("category", "unknown")]):
+            s = label_stats[lbl]
+            s["total"] += 1
+            s["verdicts"][rec.get("verdict", "?")] += 1
+            if detected:
+                s["detected"] += 1
+            else:
+                s["clean"] += 1
+            for chk in rec.get("checks_fired", []):
+                s["checks_fired"][chk] += 1
+                all_checks_fired[chk] += 1
+            for finding in rec.get("top_findings", []):
+                key = finding[:60]
+                s["finding_keys"][key] += 1
+
+    lines = [
+        "", "=" * 70,
+        "  ast-guard MALT Benchmark Report",
+        "  Dataset: METR MALT (7,179 agent transcripts, 21 models)",
+        "=" * 70,
+        "",
+        f"  Total scannable samples: {total_scannable}",
+        f"  Total flagged:           {total_flagged} "
+        f"({100*total_flagged/total_scannable:.1f}%)" if total_scannable else "",
+        "",
+        "  BREAKDOWN BY CHECK TRIGGERED (across all flagged samples)",
+        "  " + "-" * 50,
+    ]
+    for chk, count in all_checks_fired.most_common():
+        short = chk.replace("check_", "").replace("_", " ").title()
+        lines.append(f"  {short:<35} {count:>6}")
+
+    # Ordered label display: normal first, then others by frequency
+    ordered_labels = ["normal"] + sorted(
+        [l for l in label_stats if l != "normal"],
+        key=lambda l: label_stats[l]["total"],
+        reverse=True,
+    )
+
+    lines += ["", "  PER-LABEL RESULTS", "  " + "-" * 50]
+
+    for label in ordered_labels:
+        s = label_stats.get(label)
+        if not s or s["total"] == 0:
+            continue
+        total = s["total"]
+        det = s["detected"]
+        rate = 100 * det / total if total else 0
+
+        if label == "normal":
+            clean_pct = 100 * s["clean"] / total if total else 0
+            lines.append(
+                f"  normal              {total:>6} samples  "
+                f"CLEAN: {s['clean']:>6} ({clean_pct:.1f}%) — true negative rate"
+            )
+            lines.append(
+                f"                                        "
+                f"flagged: {det:>6} ({rate:.1f}%) — false positive rate"
+            )
+        else:
+            lines.append(
+                f"  {label:<20} {total:>6} samples  "
+                f"flagged: {det:>6} ({rate:.1f}%)"
+            )
+
+        # Top 5 finding types for this label
+        if s["finding_keys"]:
+            lines.append(f"    Top findings:")
+            for key, cnt in s["finding_keys"].most_common(5):
+                lines.append(f"      [{cnt:>4}x] {key}")
+
+    lines += ["", "=" * 70, ""]
+    return "\n".join(lines)
+
+
 def export_results(ext_results: dict, out_path: Path) -> None:
     """Write full results as JSON and a markdown summary table."""
     # JSON
@@ -567,6 +712,28 @@ def main():
 
     if args.benchmark:
         names = args.benchmark
+
+        # Structural benchmark is built-in; route it separately.
+        if "structural" in names:
+            from benchmarks.structural_benchmark.runner import (
+                run_structural_benchmark,
+                format_report as format_structural_report,
+                export_results as export_structural_results,
+            )
+            structural_data = run_structural_benchmark(
+                mode=args.mode, verbose=args.verbose
+            )
+            if args.export:
+                export_structural_results(structural_data, Path(args.export + "_structural"))
+            if args.json:
+                print(json.dumps(structural_data, indent=2))
+            else:
+                print(format_structural_report(structural_data, verbose=args.verbose))
+            remaining = [n for n in names if n != "structural"]
+            if not remaining:
+                return
+            names = remaining
+
         ext_results = run_external_benchmarks(
             names, download=args.download, mode=args.mode
         )
@@ -575,7 +742,14 @@ def main():
         if args.json:
             print(json.dumps(ext_results, indent=2))
         else:
-            print(format_external_report(ext_results))
+            # MALT gets its own report; everything else uses the standard report.
+            non_malt = {k: v for k, v in ext_results.items() if k != "malt"}
+            if non_malt:
+                print(format_external_report(non_malt))
+            if "malt" in ext_results and ext_results["malt"].get("status") == "ok":
+                print(format_malt_report(ext_results["malt"]))
+            elif "malt" in ext_results:
+                print(format_external_report({"malt": ext_results["malt"]}))
         return
 
     # Original built-in benchmark.

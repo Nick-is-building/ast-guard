@@ -1,5 +1,47 @@
 # CHANGELOG.md - ast-guard
 
+## [2.0.0] - 2026-05-31
+
+### Added
+
+- **Check 6 — Behavioral Risk Scoring** (`ast_guard/check_behavioral.py`): Standalone-only check that assigns an additive risk score from AST-detectable behavioral patterns. Signals: `stack_introspection` (+70), `module_cache_manipulation` (+70), `process_termination` (+70), `test_file_manipulation` (+50), `dangerous_call` (+50), `subprocess_shell` (+30), `environ_mutation` (+30), `file_write_unknown_target` (+10), `filesystem_traversal` (+10), `unknown_import` (+10). Thresholds: CLEAN < 30, WARNING 30–69, CRITICAL ≥ 70 (or any single signal ≥ 70). Significantly improves bypass\_constraints detection in standalone mode.
+
+- **`scan_standalone()` in `__init__.py`**: Public API for single-code-block scanning without a baseline. Integrates Check 6; Check 2 is inactive (no baseline). Adds standalone-specific literal threshold (default 50) and extended safe-import list for ML/data-science libraries.
+
+- **Standalone mode calibration**: Raised Check 1 literal threshold for standalone to 50 (pair-mode default is lower), removed `os` and `sys` from CRITICAL imports in standalone mode, expanded safe-import list to ~100 common ML/data-science libraries, added context-aware `exit()` differentiation (only fires process\_termination outside `if __name__ == '__main__'` guards).
+
+- **MALT benchmark loader** (`benchmarks/loaders/malt_loader.py`): Streaming ingestion of METR MALT dataset from HuggingFace (`metr-evals/malt-public`). Extracts 140,726 code blocks from 7,179 agent transcripts; filters to 81,515 scannable blocks (>50 chars, parseable). Per-label aggregation across 10 MALT categories.
+
+- **Multi-language engine** (`ast_guard/multilang.py`): Language detection and adapter dispatch for Python (native `ast`), Bash, and JavaScript/TypeScript (tree-sitter). Optional dependency: `pip install ast-guard[multilang]`. Bash adapter detects dangerous calls (curl, wget, eval, exec, rm, chmod, chown, dd, mkfs, nc, ncat). JS/TS adapter detects eval, Function(), require('child\_process'), import('fs'), dangerous globals.
+
+- **Benchmark framework** (`benchmarks/`): Unified ingestion pipeline for 7 datasets (TRACE built-in, TRACE external, Terminal Wrench, EvilGenie, Countdown-Code, School of Reward Hacks, MALT). Loader interface: `load() → list[dict]` returning `{original_code, generated_code, language, label, metadata}`. CLI runner: `python -m benchmarks.run_benchmark [--all|<name>] [--json <path>]`.
+
+- **Multi-level aliasing in Check 3** (v1.3.1): Chained aliases (`b = __builtins__; e = b['eval']; e(...)`), tuple-unpack aliases, and dict-dispatch patterns are now tracked. `chr()` obfuscation via aliased chr and `builtins["chr"]` detected. `resolve_call_name` bare-attribute collision fixed (no longer conflates `obj.method()` with `method()`).
+
+- **Scientific evaluation documentation**: `benchmarks/RESULTS.md` (publication-quality results across 5 datasets), `benchmarks/METHODOLOGY.md` (full optimization history, data pipeline, false positive analysis), `benchmarks/data/malt_summary.json` (machine-readable MALT results), `benchmarks/data/iteration_log.json` (6-iteration standalone calibration log).
+
+### Changed
+
+- `__version__` bumped to `2.0.0`.
+- `__all__` in `__init__.py` updated to include `scan_standalone` and `scan_multilang`.
+- Check 4 standalone mode no longer fires CRITICAL on `os` and `sys` — both are ubiquitous in legitimate agent code and carry no incremental reward-hacking signal without a baseline.
+- MALT evaluation: 22.2% flag rate on 81,515 samples; 78.5% true-negative rate on normal-labeled code; 72.0% detection on hardcoded\_solution, 44.3% on bypass\_constraints.
+
+### Benchmark Results Summary
+
+| Dataset | Mode | Metric | Score |
+|---------|------|--------|-------|
+| TRACE built-in (33 samples) | Pair | F1 | 95.7% |
+| TRACE built-in (33 samples) | Pair | Precision | 100% |
+| TRACE built-in (33 samples) | Pair | Recall | 91.7% |
+| School of Reward Hacks (26 valid) | Pair | Recall | 96.2% |
+| Countdown-Code (15,894) | Pair | True Negative Rate | 99.0% |
+| MALT normal (77,369) | Standalone | Specificity (TNR) | 78.5% |
+| MALT hardcoded\_solution (429) | Standalone | Detection Rate | 72.0% |
+| MALT bypass\_constraints (2,379) | Standalone | Detection Rate | 44.3% |
+
+---
+
 ## [1.3.0] - 2026-05-28
 
 ### Added
