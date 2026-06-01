@@ -33,10 +33,9 @@ sources:
 | Source | Pattern categories covered |
 |--------|---------------------------|
 | METR TRACE taxonomy (Deshpande et al., 2026) | CAT_01, CAT_02, CAT_05, CAT_07, CAT_08, CAT_09 |
-| EvilGenie (Zhong et al., arXiv:2501.01423, 2025) | CAT_03, CAT_04, CAT_08, CAT_10 |
-| Terminal Wrench (Kambhampati et al., 2024) | CAT_05, CAT_07, CAT_09, CAT_10 |
+| EvilGenie (Gabor, Lynch, Rosenfeld (2025), arXiv:2511.21654) | CAT_03, CAT_04, CAT_08, CAT_10 |
+| Terminal Wrench (Bercovich et al., 2026) | CAT_05, CAT_07, CAT_09, CAT_10 |
 | Extensional enumeration (Helff et al., arXiv:2604.15149, 2025) | CAT_06, CAT_11 |
-| RLVR shortcuts (Pan et al., 2025; Yeo et al., 2025) | CAT_01, CAT_02, CAT_06 |
 
 For each category, at least three samples are included covering:
 - a **CRITICAL** case (single check or combination fires at highest severity)
