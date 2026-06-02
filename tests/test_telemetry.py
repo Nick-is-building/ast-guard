@@ -101,6 +101,15 @@ def test_telemetry_disabled():
     stats = telemetry.get_stats()
     assert stats["total_scans"] == 0
 
+def test_fingerprint_dict_order_independent():
+    """Two metrics dicts that differ only in dict insertion order must hash identically."""
+    metrics_a = {"function_complexities": {"b": 2, "a": 1}}
+    metrics_b = {"function_complexities": {"a": 1, "b": 2}}
+    fp_a = telemetry.calculate_fingerprint("def f(): pass", metrics_a)
+    fp_b = telemetry.calculate_fingerprint("def f(): pass", metrics_b)
+    assert fp_a == fp_b
+
+
 def test_fingerprint_handles_list_of_dict_metrics():
     metrics = {
         "if_count": 3,
