@@ -208,3 +208,44 @@ def do_work():
     # Functional calls:
     # 'map' is a functional call
     assert metrics["functional_call_count"] == 1
+
+
+def test_build_lineno_index_perf():
+    """build_lineno_index must be at least 2x faster than a per-call inline ast.walk for 200 calls."""
+    import ast
+    import time
+    from ast_guard.analyzer import build_lineno_index, resolve_call_name
+
+    # Synthetic 500-LOC file with 200 distinct function calls
+    lines = ["def dummy(): pass"]
+    for i in range(200):
+        lines.append(f"func_{i}(arg_{i})")
+    # Pad to 500 lines
+    for i in range(500 - len(lines)):
+        lines.append(f"x_{i} = {i}")
+    code = "\n".join(lines)
+    tree = ast.parse(code)
+    call_names = [f"func_{i}" for i in range(200)]
+
+    def old_lookup(tree, call_name):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and resolve_call_name(node.func) == call_name:
+                return getattr(node, "lineno", None)
+        return None
+
+    # Baseline: inline walk per call (old approach)
+    t0 = time.perf_counter()
+    for name in call_names:
+        old_lookup(tree, name)
+    old_time = time.perf_counter() - t0
+
+    # New approach: build index once, then O(1) lookups
+    t0 = time.perf_counter()
+    idx = build_lineno_index(tree)
+    for name in call_names:
+        idx["calls"].get(name)
+    new_time = time.perf_counter() - t0
+
+    assert new_time < old_time / 2, (
+        f"build_lineno_index not 2x faster: new={new_time:.4f}s old={old_time:.4f}s"
+    )

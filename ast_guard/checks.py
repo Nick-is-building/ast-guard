@@ -1,5 +1,5 @@
 import ast
-from ast_guard.analyzer import find_docstring_node_ids, resolve_call_name, resolve_constant_string
+from ast_guard.analyzer import find_docstring_node_ids, resolve_call_name, resolve_constant_string, build_lineno_index
 
 def extract_non_docstring_strings(tree):
     """Extracts all string constant values that are not docstrings."""
@@ -86,14 +86,11 @@ def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
     gen_strings = extract_non_docstring_strings(gen_tree)
     
     new_strings = gen_strings - orig_strings
+    if any(len(s) > long_string_len for s in new_strings):
+        _lineno_idx = build_lineno_index(gen_tree)
     for s in new_strings:
         if len(s) > long_string_len:
-            # Let's find the lineno for this string in gen_tree
-            line_no = None
-            for node in ast.walk(gen_tree):
-                if isinstance(node, ast.Constant) and node.value == s:
-                    line_no = getattr(node, "lineno", None)
-                    break
+            line_no = _lineno_idx["strings"].get(s)
             findings.append({
                 "severity": "WARNING",
                 "line": line_no,
@@ -254,21 +251,16 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
     orig_calls = set(orig_metrics.get("call_list", []))
     gen_calls = set(gen_metrics.get("call_list", []))
     new_calls = gen_calls - orig_calls
-    
-    for call in new_calls:
-        if is_blocked_call(call, blocklist_imports):
-            # Find the lineno
-            line_no = None
-            for node in ast.walk(gen_tree):
-                if isinstance(node, ast.Call):
-                    if resolve_call_name(node.func) == call:
-                        line_no = getattr(node, "lineno", None)
-                        break
-            findings.append({
-                "severity": "CRITICAL",
-                "line": line_no,
-                "explanation": f"New forbidden call '{call}' detected in the generated code."
-            })
+    new_blocked = [c for c in new_calls if is_blocked_call(c, blocklist_imports)]
+    if new_blocked:
+        _lineno_idx = build_lineno_index(gen_tree)
+    for call in new_blocked:
+        line_no = _lineno_idx["calls"].get(call)
+        findings.append({
+            "severity": "CRITICAL",
+            "line": line_no,
+            "explanation": f"New forbidden call '{call}' detected in the generated code."
+        })
             
     # Anti-obfuscation checks (full generated AST scan)
     # Collect all Assign nodes once, then expand forbidden_aliases to a fixed

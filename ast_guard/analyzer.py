@@ -430,6 +430,30 @@ def collect_function_complexities(tree):
     return complexities
 
 
+def build_lineno_index(tree) -> dict:
+    """Single-pass index over the AST.
+
+    Returns a dict with two sub-dicts:
+      "strings": {string_value: first_lineno}
+      "calls":   {resolved_call_name: first_lineno}
+
+    Use this instead of per-finding ast.walk() calls to avoid O(n*k)
+    traversal cost when many findings reference the same tree.
+    """
+    string_locs: dict = {}
+    call_locs: dict = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            v = node.value
+            if v not in string_locs:
+                string_locs[v] = getattr(node, "lineno", None)
+        elif isinstance(node, ast.Call):
+            name = resolve_call_name(node.func)
+            if name and name not in call_locs:
+                call_locs[name] = getattr(node, "lineno", None)
+    return {"strings": string_locs, "calls": call_locs}
+
+
 def extract_metrics(code: str) -> dict:
     """
     Parses the given Python code string and extracts structured AST metrics.
