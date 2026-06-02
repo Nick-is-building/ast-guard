@@ -13,7 +13,7 @@ from ast_guard.checks import (
     extract_non_docstring_strings,
 )
 from ast_guard.config import load_effective_config
-from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback
+from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback, get_or_create_salt, hash_code_for_scan
 from ast_guard.check_behavioral import risk_score_standalone
 
 def scan(original_code: str, generated_code: str, mode: str = None, config_override: dict = None, telemetry_enabled: bool = True) -> dict:
@@ -69,7 +69,10 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
         if telemetry_enabled:
             # gen_metrics doesn't exist (parse failed), so pass an empty dict.
             # Logging orig_metrics twice would falsely claim gen == orig.
-            telemetry_record = log_scan(original_code, generated_code, orig_metrics, {}, check_results, [], effective_mode, "CRITICAL")
+            _salt = get_or_create_salt()
+            _orig_hash = hash_code_for_scan(original_code, _salt)
+            _gen_hash = hash_code_for_scan(generated_code, _salt)
+            telemetry_record = log_scan(_orig_hash, _gen_hash, orig_metrics, {}, check_results, [], effective_mode, "CRITICAL")
         else:
             telemetry_record = {}
         return {
@@ -160,9 +163,12 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
         
     # 9. Log Scan Telemetry
     if telemetry_enabled:
+        _salt = get_or_create_salt()
+        _orig_hash = hash_code_for_scan(original_code, _salt)
+        _gen_hash = hash_code_for_scan(generated_code, _salt)
         telemetry_record = log_scan(
-            original_code,
-            generated_code,
+            _orig_hash,
+            _gen_hash,
             orig_metrics,
             gen_metrics,
             check_results,
@@ -311,8 +317,11 @@ def scan_multilang(
 
     telemetry_record: dict = {}
     if telemetry_enabled:
+        _salt = get_or_create_salt()
+        _orig_hash = hash_code_for_scan(original_code, _salt)
+        _gen_hash = hash_code_for_scan(generated_code, _salt)
         telemetry_record = log_scan(
-            original_code, generated_code,
+            _orig_hash, _gen_hash,
             orig_metrics, gen_metrics,
             check_results, transformations,
             effective_mode, verdict,
@@ -511,8 +520,11 @@ def scan_standalone(
 
     telemetry_record: dict = {}
     if telemetry_enabled:
+        _salt = get_or_create_salt()
+        _orig_hash = hash_code_for_scan("", _salt)
+        _gen_hash = hash_code_for_scan(code, _salt)
         telemetry_record = log_scan(
-            "", code, orig_metrics, gen_metrics,
+            _orig_hash, _gen_hash, orig_metrics, gen_metrics,
             check_results, [], effective_mode, verdict,
         )
 

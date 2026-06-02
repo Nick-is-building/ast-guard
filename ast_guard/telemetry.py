@@ -2,8 +2,6 @@ import os
 import secrets
 import hashlib
 import json
-import ast
-import builtins
 import statistics
 
 def get_ast_guard_dir() -> str:
@@ -29,32 +27,22 @@ def get_or_create_salt() -> str:
         pass
     return salt
 
-def calculate_scan_id(orig_code: str, gen_code: str, salt: str) -> str:
+def hash_code_for_scan(code: str, salt: str) -> str:
+    """Hash a single code string with the machine salt. Call this at the API boundary so
+    plaintext never enters the deeper telemetry layer."""
     hasher = hashlib.sha256()
-    hasher.update(orig_code.encode("utf-8"))
-    hasher.update(gen_code.encode("utf-8"))
+    hasher.update(code.encode("utf-8"))
     hasher.update(salt.encode("utf-8"))
     return hasher.hexdigest()
 
-def calculate_fingerprint(gen_code: str, gen_metrics: dict) -> str:
-    node_types = {}
-    builtin_names = set()
-    
-    try:
-        tree = ast.parse(gen_code)
-        for node in ast.walk(tree):
-            t_name = type(node).__name__
-            node_types[t_name] = node_types.get(t_name, 0) + 1
-            
-            if isinstance(node, ast.Name):
-                if hasattr(builtins, node.id):
-                    builtin_names.add(node.id)
-    except Exception:
-        pass
-        
-    node_types_sorted = sorted(node_types.items())
-    builtins_sorted = sorted(list(builtin_names))
-    
+def calculate_scan_id(orig_hash: str, gen_hash: str, salt: str) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(orig_hash.encode("utf-8"))
+    hasher.update(gen_hash.encode("utf-8"))
+    hasher.update(salt.encode("utf-8"))
+    return hasher.hexdigest()
+
+def calculate_fingerprint(gen_metrics: dict) -> str:
     metrics_clean = {}
     for k, v in gen_metrics.items():
         if isinstance(v, list):
@@ -66,20 +54,14 @@ def calculate_fingerprint(gen_code: str, gen_metrics: dict) -> str:
             metrics_clean[k] = dict(sorted(v.items()))
         else:
             metrics_clean[k] = v
-            
-    fingerprint_data = {
-        "metrics": metrics_clean,
-        "node_types": node_types_sorted,
-        "builtins": builtins_sorted
-    }
-    
-    data_str = json.dumps(fingerprint_data, sort_keys=True)
+
+    data_str = json.dumps({"metrics": metrics_clean}, sort_keys=True)
     return hashlib.sha256(data_str.encode("utf-8")).hexdigest()
 
-def log_scan(orig_code: str, gen_code: str, orig_metrics: dict, gen_metrics: dict, check_results: dict, transformations: list, mode: str, verdict: str) -> dict:
+def log_scan(orig_hash: str, gen_hash: str, orig_metrics: dict, gen_metrics: dict, check_results: dict, transformations: list, mode: str, verdict: str) -> dict:
     salt = get_or_create_salt()
-    scan_id = calculate_scan_id(orig_code, gen_code, salt)
-    fingerprint = calculate_fingerprint(gen_code, gen_metrics)
+    scan_id = calculate_scan_id(orig_hash, gen_hash, salt)
+    fingerprint = calculate_fingerprint(gen_metrics)
     
     record = {
         "scan_id": scan_id,
