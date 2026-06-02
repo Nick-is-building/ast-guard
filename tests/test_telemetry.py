@@ -101,6 +101,18 @@ def test_telemetry_disabled():
     stats = telemetry.get_stats()
     assert stats["total_scans"] == 0
 
+def test_fingerprint_handles_list_of_dict_metrics():
+    metrics = {
+        "if_count": 3,
+        "enumeration_analysis": [
+            {"name": "f", "total_ifs": 2, "enumeration_ifs": 1, "loop_count": 0},
+            {"name": "g", "total_ifs": 3, "enumeration_ifs": 2, "loop_count": 0},
+        ],
+    }
+    fp = telemetry.calculate_fingerprint("def f(): pass\ndef g(): pass", metrics)
+    assert isinstance(fp, str) and len(fp) == 64
+
+
 def test_sharing_prompt_multiples_of_100():
     orig_code = "print('hello')"
     gen_code = "print('hello optimized')"

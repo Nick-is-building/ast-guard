@@ -58,7 +58,10 @@ def calculate_fingerprint(gen_code: str, gen_metrics: dict) -> str:
     metrics_clean = {}
     for k, v in gen_metrics.items():
         if isinstance(v, list):
-            metrics_clean[k] = sorted(v)
+            try:
+                metrics_clean[k] = sorted(v)
+            except TypeError:
+                metrics_clean[k] = sorted(v, key=lambda x: json.dumps(x, sort_keys=True, default=str))
         else:
             metrics_clean[k] = v
             
