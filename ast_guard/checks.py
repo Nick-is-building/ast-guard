@@ -275,6 +275,7 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
     # point to catch: chained aliases (g=eval; h=g), tuple unpacking
     # (a,b=print,eval), and dict dispatch (d={"k":eval}; d["k"]()).
     forbidden_aliases = set()          # var names aliasing a forbidden function
+    reported_alias_targets = set()     # targets already reported; prevents duplicate findings across iterations
     chr_aliases = set()                # var names aliasing chr (tracked silently; finding fires in check 6)
     forbidden_dict_keys = {}           # var_name -> set of string keys holding forbidden values
     assign_nodes = [n for n in ast.walk(gen_tree) if isinstance(n, ast.Assign)]
@@ -296,11 +297,13 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
                         if isinstance(target, ast.Name) and target.id not in forbidden_aliases:
                             forbidden_aliases.add(target.id)
                             changed = True
-                            findings.append({
-                                "severity": "CRITICAL",
-                                "line": getattr(node, "lineno", None),
-                                "explanation": f"Obfuscation attempt: Forbidden name '{val_id}' is aliased to variable '{target.id}'."
-                            })
+                            if target.id not in reported_alias_targets:
+                                reported_alias_targets.add(target.id)
+                                findings.append({
+                                    "severity": "CRITICAL",
+                                    "line": getattr(node, "lineno", None),
+                                    "explanation": f"Obfuscation attempt: Forbidden name '{val_id}' is aliased to variable '{target.id}'."
+                                })
                 # chr is not itself forbidden; track silently so check 6 can detect chr(...)
                 # inside eval args even when called through an alias
                 if val_id == "chr" or val_id in chr_aliases:
@@ -319,11 +322,13 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
                                     and tgt_elt.id not in forbidden_aliases):
                                 forbidden_aliases.add(tgt_elt.id)
                                 changed = True
-                                findings.append({
-                                    "severity": "CRITICAL",
-                                    "line": getattr(node, "lineno", None),
-                                    "explanation": f"Obfuscation attempt: Forbidden name '{val_elt.id}' is aliased via tuple unpacking to '{tgt_elt.id}'."
-                                })
+                                if tgt_elt.id not in reported_alias_targets:
+                                    reported_alias_targets.add(tgt_elt.id)
+                                    findings.append({
+                                        "severity": "CRITICAL",
+                                        "line": getattr(node, "lineno", None),
+                                        "explanation": f"Obfuscation attempt: Forbidden name '{val_elt.id}' is aliased via tuple unpacking to '{tgt_elt.id}'."
+                                    })
                             # Silent chr alias via tuple: a, b = len, chr
                             if (isinstance(val_elt, ast.Name) and isinstance(tgt_elt, ast.Name)
                                     and (val_elt.id == "chr" or val_elt.id in chr_aliases)

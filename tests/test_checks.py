@@ -400,3 +400,23 @@ def test_check3_no_false_positive_method_named_eval(default_config):
         extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
     )
     assert res["status"] == "CLEAN"
+
+
+def test_check3_alias_chain_one_finding_per_target(default_config):
+    """Three-level chain a=eval; b=a; c=b must produce exactly one finding per unique target."""
+    import re
+    orig_code = "pass"
+    gen_code = "a = eval\nb = a\nc = b\nc('payload')\n"
+    gen_tree = ast.parse(gen_code)
+    res = check_3_forbidden_calls(
+        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
+    )
+    assert res["status"] == "CRITICAL"
+    # Extract only the variable name that appears after "aliased to variable"
+    alias_targets = []
+    for f in res["findings"]:
+        m = re.search(r"aliased to variable '(\w+)'", f["explanation"])
+        if m:
+            alias_targets.append(m.group(1))
+    assert len(alias_targets) == len(set(alias_targets)), "duplicate alias finding detected"
+    assert set(alias_targets) == {"a", "b", "c"}
