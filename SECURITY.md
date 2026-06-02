@@ -8,8 +8,9 @@ ast-guard is a **detection tool**, not a sandbox. It analyzes code structure bef
 
 | Version | Supported |
 |---------|-----------|
-| 1.1.x   | ✅         |
-| 1.0.x   | ⚠️ Upgrade recommended |
+| 2.0.x   | ✅         |
+| 1.3.x   | ⚠️ Upgrade recommended |
+| < 1.3   | ❌         |
 
 ## Reporting Detection Bypasses
 
