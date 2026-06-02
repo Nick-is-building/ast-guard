@@ -160,8 +160,7 @@ via the existing extractor at `benchmarks/loaders/malt_loader.py`.
 
 ## Known open issues
 
-See the task brief the user provides at session start. As of the time
-this file was last rewritten, four items are open: a telemetry crash on
-list-of-dict metrics, a Check 5 gap for `ast.IfExp` chains, a missing
-`dict_literal_max` guard parallel to `set_literal_max`, and a stale
-`SECURITY.md` Supported-Versions table.
+- Missing `dict_literal_max` guard in allowlist config, parallel to
+  `set_literal_max`, to block Data Structure Swap override on oversized
+  dict literals. The metric is collected (`max_dict_literal_size`) but
+  the config threshold key and allowlist enforcement are not yet wired.
