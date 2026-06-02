@@ -14,7 +14,7 @@ from ast_guard.checks import (
 )
 from ast_guard.config import load_effective_config
 from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback, get_or_create_salt, hash_code_for_scan
-from ast_guard.check_behavioral import risk_score_standalone
+from ast_guard.check_behavioral import risk_score_standalone, is_safe_subprocess
 
 def scan(original_code: str, generated_code: str, mode: str = None, config_override: dict = None, telemetry_enabled: bool = True) -> dict:
     """
@@ -395,6 +395,48 @@ def scan_standalone(
             gen_metrics = dict(_EMPTY_METRICS)
         gen_tree = ast.parse("")
 
+    # Subprocess safety pre-pass: decide before Check 1 whether every subprocess
+    # call is structurally safe so the finding can land in check_1 and the import
+    # can be removed from Check 4's input in one coherent pass.
+    # Handles: import subprocess (qualified calls) and from subprocess import run.
+    # Conservative: import subprocess as sp alias is treated as potentially unsafe.
+    _subprocess_import_safe = False
+    if language == "python":
+        _sp_imports = [
+            i for i in gen_metrics.get("import_list", [])
+            if i.split(".")[0] == "subprocess"
+        ]
+        if _sp_imports:
+            _sp_from_names: set = set()
+            _sp_has_alias = False
+            for _n in ast.walk(gen_tree):
+                if isinstance(_n, ast.ImportFrom) and (_n.module or "") == "subprocess":
+                    for _a in _n.names:
+                        _sp_from_names.add(_a.asname if _a.asname else _a.name)
+                elif isinstance(_n, ast.Import):
+                    for _a in _n.names:
+                        if _a.name.split(".")[0] == "subprocess" and _a.asname:
+                            _sp_has_alias = True
+            if not _sp_has_alias:
+                _sp_from_frozen = frozenset(_sp_from_names)
+                _sp_calls = [
+                    _n for _n in ast.walk(gen_tree)
+                    if isinstance(_n, ast.Call) and (
+                        (
+                            isinstance(_n.func, ast.Attribute)
+                            and isinstance(_n.func.value, ast.Name)
+                            and _n.func.value.id == "subprocess"
+                        ) or (
+                            isinstance(_n.func, ast.Name)
+                            and _n.func.id in _sp_from_frozen
+                        )
+                    )
+                ]
+                _subprocess_import_safe = (
+                    not _sp_calls
+                    or all(is_safe_subprocess(c, _sp_from_frozen) for c in _sp_calls)
+                )
+
     # Check 1 (standalone): long strings + absolute literal count only.
     # The relative if-count rule is skipped — it requires a baseline to be
     # meaningful, and would fire for any code with a single if-statement.
@@ -427,6 +469,15 @@ def scan_standalone(
             ),
         })
 
+    if _subprocess_import_safe:
+        check_1_findings.append({
+            "severity": "WARNING", "line": None,
+            "explanation": (
+                "subprocess imported but all calls structurally safe; "
+                "downgraded from CRITICAL"
+            ),
+        })
+
     check_1 = {"status": "WARNING" if check_1_findings else "CLEAN", "findings": check_1_findings}
     check_2 = {"status": "CLEAN", "findings": []}
 
@@ -453,6 +504,13 @@ def scan_standalone(
         imp for imp in gen_metrics.get("import_list", [])
         if imp.split(".")[0] in _sa_c4_dangerous
     ]
+    # When every subprocess call is structurally safe the import is already
+    # reported as WARNING in Check 1; remove it here so Check 4 stays CLEAN.
+    if _subprocess_import_safe:
+        _sa_c4_metrics["import_list"] = [
+            imp for imp in _sa_c4_metrics["import_list"]
+            if imp.split(".")[0] != "subprocess"
+        ]
     check_4 = check_4_import_drift(orig_metrics, _sa_c4_metrics, cfg)
     # Suppress any residual WARNING findings (unknown imports in the filtered set).
     check_4["findings"] = [f for f in check_4["findings"] if f["severity"] == "CRITICAL"]

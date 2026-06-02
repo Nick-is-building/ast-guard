@@ -14,7 +14,7 @@ import ast
 import os as _os
 from typing import Optional
 
-__all__ = ["risk_score_standalone"]
+__all__ = ["risk_score_standalone", "is_safe_subprocess"]
 
 _THRESHOLD_WARNING = 30
 _THRESHOLD_CRITICAL = 70
@@ -216,15 +216,24 @@ def _is_expected_output_path(filename: str) -> bool:
     return ext in _EXPECTED_OUTPUT_EXTENSIONS
 
 
-def _is_safe_subprocess(call_node: ast.Call) -> bool:
-    """True for subprocess.run/call with a literal list arg and no shell=True."""
+def is_safe_subprocess(
+    call_node: ast.Call,
+    from_subprocess_names: frozenset = frozenset(),
+) -> bool:
+    """True for subprocess.run/call with a literal list arg and no shell=True.
+
+    from_subprocess_names: bare names imported via 'from subprocess import ...'
+    so 'run(["ls"])' after 'from subprocess import run' is also recognized.
+    """
+    _bare_safe = frozenset({"run", "call", "check_call", "check_output", "Popen"})
     fname = _call_name(call_node.func)
     if fname not in (
         "subprocess.run", "subprocess.call",
         "subprocess.check_call", "subprocess.check_output",
         "subprocess.Popen",
     ):
-        return False
+        if not (fname in _bare_safe and fname in from_subprocess_names):
+            return False
     if not call_node.args:
         return False
     if not isinstance(call_node.args[0], ast.List):
@@ -238,6 +247,9 @@ def _is_safe_subprocess(call_node: ast.Call) -> bool:
         if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value:
             return False
     return True
+
+# Deprecated alias — remove in next cycle.
+_is_safe_subprocess = is_safe_subprocess
 
 
 def _is_path_nav(call_node: ast.Call) -> bool:
@@ -272,7 +284,7 @@ def _build_safe_call_ids(tree: ast.Module, var_map: dict) -> set:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if _is_safe_subprocess(node):
+        if is_safe_subprocess(node):
             safe.add(id(node))
         elif _is_path_nav(node):
             safe.add(id(node))
