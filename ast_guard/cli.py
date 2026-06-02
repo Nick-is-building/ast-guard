@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 import os
-from ast_guard import scan, feedback
+from ast_guard import scan, feedback, __version__
 from ast_guard.output import print_ansi_report, format_json_report, format_sarif_report
 from ast_guard.telemetry import (
     export_telemetry,
@@ -86,7 +86,7 @@ def _print_detailed_stats(detailed: dict) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ast-guard v1.3 - Deterministic reward hacking detector for LLM-generated Python code."
+        description=f"ast-guard v{__version__} - Deterministic reward hacking detector for LLM-generated Python code."
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
     

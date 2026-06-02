@@ -1,5 +1,6 @@
 import hashlib
 import json
+from ast_guard import __version__
 
 # ANSI Escape Sequences
 GREEN = "\033[92m"
@@ -76,7 +77,7 @@ def print_ansi_report(result: dict) -> None:
     else:
         v_color = GREEN
         
-    print(f"\n{BOLD}{UNDERLINE}AST-GUARD v1.3 ANALYSIS REPORT{RESET}")
+    print(f"\n{BOLD}{UNDERLINE}AST-GUARD v{__version__} ANALYSIS REPORT{RESET}")
     print(f"{BOLD}Verdict:{RESET} {v_color}{BOLD}{verdict}{RESET}")
     print(f"{BOLD}Sensitivity Mode:{RESET} {mode.upper()}")
     print(f"{BOLD}Scan ID:{RESET} {scan_id}")
@@ -188,7 +189,7 @@ def format_sarif_report(result: dict, original_file: str = "original.py", genera
             "tool": {
                 "driver": {
                     "name": "ast-guard",
-                    "version": "1.3.0",
+                    "version": __version__,
                     "informationUri": "https://github.com/Nick-is-building/ast-guard",
                     "rules": _SARIF_RULES
                 }
