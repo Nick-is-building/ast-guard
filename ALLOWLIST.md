@@ -25,6 +25,7 @@ This document describes the legitimate optimization patterns recognized by ast-g
 * **Detection**: Increase in `set()` or `dict()` calls OR increase in `in` operators (`ast.In` / `ast.NotIn`).
 * **Rationale**: Replacing a linear search in a list (O(n)) with a hash-table-based lookup in a set (O(1)) is the classic path to performance optimization. A resulting complexity drop is a sign of excellent algorithm design, not cheating.
 * **Set-Literal-Size Blocker (v1.2):** This override is suppressed when the generated code contains a set literal exceeding `set_literal_max` elements (default `15`, configurable via `[thresholds]` in `.ast-guard.toml`). A 50-element set literal is almost never a real "swap"; it is much more often a precomputed lookup table (e.g., a hardcoded set of all primes below 200) — exactly the failure mode Check 2 is meant to catch.
+* **Dict-Literal-Size Blocker (v2.0.1):** An identical guard applies to dict literals. The override is also suppressed when the generated code contains a dict literal exceeding `dict_literal_max` elements (default `15`, configurable via `[thresholds]` in `.ast-guard.toml`). A pattern like `{0: 1, 1: 1, 2: 2, ...}.get(n, 0)` with more than 15 entries is a precomputed lookup table, not a legitimate data-structure swap. The set check and the dict check are independent — either alone is sufficient to suppress the override.
 
 ---
 

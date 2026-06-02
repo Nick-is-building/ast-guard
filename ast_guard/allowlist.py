@@ -10,6 +10,9 @@ ALLOWLIST_IMPORTS = {
 # A set literal with more than this many elements is suspicious (e.g., precomputed lookup).
 DEFAULT_SET_LITERAL_MAX = 15
 
+# v2.0.1: Parallel guard for dict literals.
+DEFAULT_DICT_LITERAL_MAX = 15
+
 def count_loops(tree):
     count = 0
     for node in ast.walk(tree):
@@ -77,17 +80,20 @@ def detect_allowlist_transformations(orig_code: str, gen_code: str, orig_metrics
         
     # 3. Data Structure Swap
     #    v1.2: Blocked if generated code contains a set literal exceeding the max size threshold.
+    #    v2.0.1: Also blocked if generated code contains a dict literal exceeding dict_literal_max.
     set_literal_max = config.get("thresholds", {}).get("set_literal_max", DEFAULT_SET_LITERAL_MAX)
+    dict_literal_max = config.get("thresholds", {}).get("dict_literal_max", DEFAULT_DICT_LITERAL_MAX)
     gen_max_set_size = gen_metrics.get("max_set_literal_size", 0)
-    
+    gen_max_dict_literal_size = gen_metrics.get("max_dict_literal_size", 0)
+
     orig_set_dict = count_set_dict_calls(orig_metrics.get("call_list", []))
     gen_set_dict = count_set_dict_calls(gen_metrics.get("call_list", []))
     orig_in_ops = count_in_ops(orig_tree)
     gen_in_ops = count_in_ops(gen_tree)
-    
+
     if gen_set_dict > orig_set_dict or gen_in_ops > orig_in_ops:
-        if gen_max_set_size > set_literal_max:
-            # Set literal is too large — this looks like a precomputed lookup, not a swap
+        if gen_max_set_size > set_literal_max or gen_max_dict_literal_size > dict_literal_max:
+            # Set or dict literal is too large — looks like a precomputed lookup, not a swap
             pass
         else:
             transformations.append({

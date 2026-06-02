@@ -254,13 +254,27 @@ def count_set_literals(tree):
     Counts the maximum number of elements in any set literal (ast.Set) in the tree.
     Used by the allowlist to block Data Structure Swap overrides when
     a suspiciously large set literal is present (e.g., precomputed prime lookup).
-    
+
     Added in v1.2.
     """
     max_size = 0
     for node in ast.walk(tree):
         if isinstance(node, ast.Set):
             max_size = max(max_size, len(node.elts))
+    return max_size
+
+def count_dict_literals(tree):
+    """
+    Returns the maximum number of keys in any dict literal (ast.Dict) in the tree.
+    Used by the allowlist to block Data Structure Swap overrides when a
+    suspiciously large dict literal is present (e.g., a precomputed lookup table).
+
+    Added in v2.0.1 as the dict-literal parallel to count_set_literals.
+    """
+    max_size = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            max_size = max(max_size, len(node.keys))
     return max_size
 
 def count_enumeration_pattern(tree):
@@ -475,6 +489,9 @@ def extract_metrics(code: str) -> dict:
     # 8. Set literal size (v1.2)
     max_set_literal_size = count_set_literals(tree)
 
+    # 8b. Dict literal size (v2.0.1)
+    max_dict_literal_size = count_dict_literals(tree)
+
     # 9. Per-function McCabe complexity, keyed by qualified name
     function_complexities = collect_function_complexities(tree)
 
@@ -493,6 +510,7 @@ def extract_metrics(code: str) -> dict:
         "comprehension_count": comprehension_count,
         "functional_call_count": functional_call_count,
         "max_set_literal_size": max_set_literal_size,
+        "max_dict_literal_size": max_dict_literal_size,
         "function_complexities": function_complexities,
         "enumeration_analysis": enumeration_analysis,
     }

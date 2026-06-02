@@ -284,6 +284,7 @@ def extract_metrics(code: str) -> dict:
         "comprehension_count": 0,
         "functional_call_count": 0,
         "max_set_literal_size": 0,
+        "max_dict_literal_size": 0,
         "function_complexities": function_complexities,
         "enumeration_analysis": [],
         "dangerous_calls": dangerous_calls,

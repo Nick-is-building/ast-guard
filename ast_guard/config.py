@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
         "complexity_rel_decrease": 0.60,
         "complexity_abs_min": 5,       # v1.2: Minimum original complexity for Check 2 to fire
         "set_literal_max": 15,         # v1.2: Max set literal size before allowlist override is blocked
+        "dict_literal_max": 15,        # v2.0.1: Max dict literal size before allowlist override is blocked
         "enumeration_ratio": 0.70,     # v1.3: Min share of constant-equality branches for Check 5
         "enumeration_min_ifs": 5,      # v1.3: Min total branches for Check 5 to fire
     },
