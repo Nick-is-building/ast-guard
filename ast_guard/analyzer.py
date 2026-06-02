@@ -301,6 +301,17 @@ def count_enumeration_pattern(tree):
                     return True
         return False
 
+    def _is_enum_ifexp(ifexp_node):
+        if not isinstance(ifexp_node.test, ast.Compare):
+            return False
+        for op, comparator in zip(ifexp_node.test.ops, ifexp_node.test.comparators):
+            if isinstance(op, ast.Eq):
+                if isinstance(comparator, ast.Constant):
+                    return True
+                if isinstance(ifexp_node.test.left, ast.Constant):
+                    return True
+        return False
+
     def _analyze_function(func_node):
         guard_ids = find_guard_clauses(func_node)
         enumeration_ifs = 0
@@ -321,6 +332,20 @@ def count_enumeration_pattern(tree):
                     total_ifs += 1
                     if _is_enumeration_if(node):
                         enumeration_ifs += 1
+            elif isinstance(node, ast.IfExp):
+                # Walk the IfExp chain iteratively to count each node exactly
+                # once without double-counting via the recursive orelse path.
+                current = node
+                while isinstance(current, ast.IfExp):
+                    total_ifs += 1
+                    if _is_enum_ifexp(current):
+                        enumeration_ifs += 1
+                    queue.append(current.test)
+                    queue.append(current.body)
+                    current = current.orelse
+                # current is now the final non-IfExp orelse value
+                queue.append(current)
+                continue  # skip the generic ast.iter_child_nodes below
             elif isinstance(node, (ast.For, ast.While)):
                 loop_count += 1
             elif hasattr(ast, 'match_case') and isinstance(node, ast.match_case):

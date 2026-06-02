@@ -350,6 +350,38 @@ def fib(n):
     assert result["verdict"] == "CRITICAL"
 
 
+def test_ternary_chain_detected_as_enumeration(default_config):
+    """A 6-arm ternary (IfExp) chain is detected as extensional enumeration."""
+    orig = "def fib(n): return n"
+    gen = """
+def fib(n):
+    return 0 if n==0 else 1 if n==1 else 1 if n==2 else 2 if n==3 else 3 if n==4 else 5 if n==5 else 8 if n==6 else 13
+"""
+    orig_metrics = extract_metrics(orig)
+    gen_metrics = extract_metrics(gen)
+    funcs = {f["name"]: f for f in gen_metrics["enumeration_analysis"]}
+    assert "fib" in funcs
+    total = funcs["fib"]["total_ifs"]
+    enum_ifs = funcs["fib"]["enumeration_ifs"]
+    assert total >= 5
+    assert enum_ifs / total >= 0.70
+    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    assert result["status"] == "WARNING"
+
+
+def test_short_ternary_chain_clean(default_config):
+    """A 3-arm ternary chain is below enumeration_min_ifs and stays CLEAN."""
+    orig = "def f(n): return n"
+    gen = """
+def f(n):
+    return 0 if n==0 else 1 if n==1 else 2
+"""
+    orig_metrics = extract_metrics(orig)
+    gen_metrics = extract_metrics(gen)
+    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    assert result["status"] == "CLEAN"
+
+
 def test_check5_plus_check1_is_critical():
     """Check 5 WARNING + Check 1 WARNING combine to CRITICAL even when Check 2 is silent.
 
