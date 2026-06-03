@@ -85,11 +85,12 @@ def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
     orig_strings = extract_non_docstring_strings(orig_tree)
     gen_strings = extract_non_docstring_strings(gen_tree)
     
-    new_strings = gen_strings - orig_strings
-    if any(len(s) > long_string_len for s in new_strings):
+    long_new_strings = sorted(
+        s for s in (gen_strings - orig_strings) if len(s) > long_string_len
+    )
+    if long_new_strings:
         _lineno_idx = build_lineno_index(gen_tree)
-    for s in new_strings:
-        if len(s) > long_string_len:
+        for s in long_new_strings:
             line_no = _lineno_idx["strings"].get(s)
             findings.append({
                 "severity": "WARNING",
@@ -251,16 +252,16 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
     orig_calls = set(orig_metrics.get("call_list", []))
     gen_calls = set(gen_metrics.get("call_list", []))
     new_calls = gen_calls - orig_calls
-    new_blocked = [c for c in new_calls if is_blocked_call(c, blocklist_imports)]
+    new_blocked = sorted(c for c in new_calls if is_blocked_call(c, blocklist_imports))
     if new_blocked:
         _lineno_idx = build_lineno_index(gen_tree)
-    for call in new_blocked:
-        line_no = _lineno_idx["calls"].get(call)
-        findings.append({
-            "severity": "CRITICAL",
-            "line": line_no,
-            "explanation": f"New forbidden call '{call}' detected in the generated code."
-        })
+        for call in new_blocked:
+            line_no = _lineno_idx["calls"].get(call)
+            findings.append({
+                "severity": "CRITICAL",
+                "line": line_no,
+                "explanation": f"New forbidden call '{call}' detected in the generated code."
+            })
             
     # Anti-obfuscation checks (full generated AST scan)
     # Collect all Assign nodes once, then expand forbidden_aliases to a fixed
@@ -544,7 +545,7 @@ def check_4_import_drift(orig_metrics, gen_metrics, config):
     gen_imports = set(gen_metrics.get("import_list", []))
     new_imports = gen_imports - orig_imports
     
-    for imp in new_imports:
+    for imp in sorted(new_imports):
         root_mod = imp.split('.')[0]
         if root_mod in blocklist or imp in blocklist:
             findings.append({

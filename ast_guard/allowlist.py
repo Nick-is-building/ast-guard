@@ -107,7 +107,7 @@ def detect_allowlist_transformations(orig_code: str, gen_code: str, orig_metrics
     new_imports = gen_imports - orig_imports
     
     allowed_new_imports = []
-    for imp in new_imports:
+    for imp in sorted(new_imports):
         root_mod = imp.split('.')[0]
         if root_mod in ALLOWLIST_IMPORTS:
             allowed_new_imports.append(imp)
