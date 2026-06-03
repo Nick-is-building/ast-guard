@@ -60,11 +60,13 @@ All results are fully reproducible. See [benchmarks/RESULTS.md](benchmarks/RESUL
 | TRACE taxonomy (Deshpande et al. 2026) | Pair | 33 | F1 | **95.7%** |
 | School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** |
 | Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** |
-| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity | **84.2%** |
+| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity† | **84.2%** |
 | MALT — hardcoded_solution category | Standalone | 429 | Detection Rate | **70.9%** |
 | MALT — bypass_constraints category | Standalone | 2,379 | Detection Rate | **41.7%** |
 
 **Performance:** mean 4.7ms per scan, ~210 samples/second, zero API cost.
+
+† TNR measured on the `normal` label only (77,369 samples); see [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for the full confusion matrix.
 
 ### Comparison with Existing Approaches
 

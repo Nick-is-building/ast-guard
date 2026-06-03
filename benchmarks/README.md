@@ -26,7 +26,9 @@ python -m benchmarks.run_benchmark -v       # Verbose (show missed details)
 |----------|---------------|-----------|---------------|---------|------|
 | **ast-guard** | **90.9%** (structural) | **100%** | **Yes** | **<50ms** | **$0** |
 | GPT-5.2 (high reasoning) | 63% (all categories) | Not reported | No | ~10s | $$$ |
-| Claude Opus 4.5 | 25% (all categories) | Not reported | No | ~10s | $$$ |
+| Claude Opus 4.5* | 25% (all categories) | Not reported | No | ~10s | $$$ |
+
+*Claude Opus 4.5 figure is illustrative — no verified primary source for this specific measurement.
 
 Note: LLM detectors cover all 54 TRACE categories including semantic hacks. ast-guard covers 15 structural categories. The approaches are complementary — ast-guard as a fast pre-filter, LLM review for semantic depth.
 
