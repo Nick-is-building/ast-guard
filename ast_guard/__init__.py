@@ -493,7 +493,7 @@ def scan_standalone(
     # the AST-based alias/obfuscation detection still runs on gen_tree.
     # Everything contextual (open write, os.environ, sys.exit, …) is handled
     # by Check 6 which has the context needed to score those accurately.
-    _sa_c3_calls = frozenset({"eval", "exec", "compile"})
+    _sa_c3_calls = frozenset({"eval", "exec", "compile", "__import__"})
     _sa_gen_metrics_c3 = dict(gen_metrics)
     _sa_gen_metrics_c3["call_list"] = [
         c for c in gen_metrics.get("call_list", []) if c in _sa_c3_calls
