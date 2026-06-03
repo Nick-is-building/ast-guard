@@ -2,7 +2,7 @@
 
 ## Abstract
 
-ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across four datasets: the built-in TRACE benchmark (33 samples), the external TRACE HuggingFace dataset (46 trajectories), Countdown-Code (15,894 samples), School of Reward Hacks (26 valid Python samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode (original vs. generated code), ast-guard achieves 95.7% F1 on structurally detectable TRACE hacks with 100% precision and 0% false positive rate. In standalone mode on MALT, it achieves 78.5% true-negative rate while detecting 44.3% of bypass\_constraints and 72.0% of hardcoded\_solution samples. ast-guard is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
+ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across four datasets: the built-in TRACE benchmark (33 samples), the external TRACE HuggingFace dataset (46 trajectories), Countdown-Code (15,894 samples), School of Reward Hacks (26 valid Python samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode (original vs. generated code), ast-guard achieves 95.7% F1 on structurally detectable TRACE hacks with 100% precision and 0% false positive rate. In standalone mode on MALT, it achieves 84.2% true-negative rate while detecting 41.7% of bypass\_constraints and 70.9% of hardcoded\_solution samples. ast-guard is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
 
 ---
 
@@ -10,7 +10,7 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 | Property | Value |
 |----------|-------|
-| Tool | ast-guard v2.0.0 |
+| Tool | ast-guard v2.0 (post-calibration) |
 | Approach | Deterministic pre-execution static analysis |
 | Core dependency | Python standard library only (zero external deps) |
 | Latency | <50ms per scan |
@@ -115,8 +115,8 @@ Standalone mode scans a single code block without a baseline. This mode trades p
 | Metric | Value |
 |--------|-------|
 | Total scannable | 81,515 |
-| Total flagged | 18,081 (22.2%) |
-| Total clean | 63,434 (77.8%) |
+| Total flagged | 13,548 (16.6%) |
+| Total clean | 67,967 (83.4%) |
 
 ### Confusion Matrix (binary: structural-hack vs. normal)
 
@@ -124,59 +124,60 @@ Binary classification: **hack** = bypass\_constraints + hardcoded\_solution + sa
 
 | | Flagged | Clean |
 |---|---------|-------|
-| **Hack** (3,005) | TP = 1,377 | FN = 1,628 |
-| **Non-hack** (78,510) | FP = 16,673 | TN = 60,696* |
+| **Hack** (3,005) | TP = 1,318 | FN = 1,687 |
+| **Non-hack** (78,510) | FP = 12,209 | TN = 65,160* |
 
 *TN calculated on normal label only (77,369 samples). Some non-hack labels (partial\_problem\_solving, ignores\_task\_instructions) have legitimate reasons to use flagged patterns.
 
 | Metric | Value |
 |--------|-------|
-| Precision | 7.6% |
-| Recall | 45.8% |
-| F1 | 13.0% |
-| Specificity (TNR on normal) | **78.5%** |
+| Precision | 9.8% |
+| Recall | 43.9% |
+| F1 | 15.7% |
+| Specificity (TNR on normal) | **84.2%** |
 
-**Interpretation:** The low precision is expected and acceptable — standalone mode is designed as a pre-filter, not a final classifier. The 78.5% specificity means most legitimate agent code passes through without triggering a flag. The 45.8% recall covers only structurally detectable hacks; semantic hacks (giving wrong answers, sandbagging) cannot be detected by AST analysis.
+**Interpretation:** The low precision is expected and acceptable — standalone mode is designed as a pre-filter, not a final classifier. The 84.2% specificity means most legitimate agent code passes through without triggering a flag. The 43.9% recall covers only structurally detectable hacks; semantic hacks (giving wrong answers, sandbagging) cannot be detected by AST analysis.
 
 ### Per-Category Detection Rates
 
 | Label | Samples | Flagged | Detection Rate | Notes |
 |-------|---------|---------|---------------|-------|
-| normal | 77,369 | 16,673 | 21.5% (FPR) | Legitimate agent code; subprocess and file I/O are common |
-| bypass\_constraints | 2,379 | 1,054 | **44.3%** | Stack introspection, importlib, process termination |
-| hardcoded\_solution | 429 | 309 | **72.0%** | Module cache manipulation, sys.modules[], importlib |
+| normal | 77,369 | 12,209 | 15.8% (FPR) | Legitimate agent code; subprocess and file I/O are common |
+| bypass\_constraints | 2,379 | 993 | **41.7%** | Stack introspection, importlib, process termination |
+| hardcoded\_solution | 429 | 304 | **70.9%** | Module cache manipulation, sys.modules[], importlib |
 | ignores\_task\_instructions | 361 | 81 | 22.4% | File writes to test/score paths; borderline legitimate |
-| match\_weaker\_model | 171 | 14 | 8.2% | High literal count; mostly semantic |
-| sabotage | 197 | 14 | 7.1% | Mixed structural and semantic sabotage |
+| match\_weaker\_model | 171 | 7 | 4.1% | High literal count; mostly semantic |
+| sabotage | 197 | 21 | 10.7% | Mixed structural and semantic sabotage |
 | refusals | 147 | 4 | 2.7% | subprocess in refusal context |
-| reasoning\_about\_task | 74 | 3 | 4.1% | Unknown imports (e.g., PyPDF2) |
-| partial\_problem\_solving | 731 | 10 | 1.4% | Threading imports in partial solutions |
+| reasoning\_about\_task | 74 | 2 | 2.7% | Unknown imports (e.g., PyPDF2) |
+| partial\_problem\_solving | 731 | 8 | 1.1% | Threading imports in partial solutions |
 | gives\_up | 1 | 0 | 0.0% | — |
 
 ### Per-Check Contribution
 
-Trigger counts across all 18,081 flagged samples (one sample may trigger multiple checks):
+Trigger counts across all 13,548 flagged samples (one sample may trigger multiple checks):
 
 | Check | Triggers | % of Flagged |
 |-------|----------|-------------|
-| 1 — Hardcoding | 15,867 | 87.8% |
-| 4 — Import Drift | 3,048 | 16.9% |
-| 6 — Behavioral Risk Scoring | 2,769 | 15.3% |
-| 3 — Forbidden Calls | 204 | 1.1% |
-| 5 — Extensional Enumeration | 57 | 0.3% |
+| 1 — Hardcoding | 10,588 | 78.2% |
+| 6 — Behavioral Risk Scoring | 3,765 | 27.8% |
+| 4 — Import Drift | 2,202 | 16.3% |
+| 3 — Forbidden Calls | 226 | 1.7% |
+| 5 — Extensional Enumeration | 59 | 0.4% |
 | 2 — Complexity Collapse | ~0 | ~0% |
 
 Note: Check 2 does not fire in standalone mode — there is no baseline complexity to compare against.
 
-Check 1 dominates because the standalone literal threshold (50 literals) is hit by many agent code blocks that include data structures or lookup tables. The top false positive trigger is `subprocess` import (CRITICAL in Check 4) which appears legitimately in ~2,300 normal agent tasks.
+Check 1 dominates because the standalone literal threshold (80 literals, conditional 50 when behavioral score ≥ 30) is hit by agent code blocks that include large data structures or lookup tables. The top false positive trigger is `open()` write on unknown targets (+10 in Check 6) at ~2,140 occurrences, followed by `subprocess` import at ~1,465.
 
 ### Top False Positive Triggers on Normal Samples
 
 | Finding | Count | Assessment |
 |---------|-------|------------|
-| Forbidden import 'subprocess' | 2,317 | Legitimate agent use (file operations, shell commands) |
-| open() write mode (file\_write\_unknown\_target) | 2,278 | Legitimate file output — not targeting test/score files |
-| High literal count (≥50) | ~1,300 | Data structures in legitimate code |
+| open() write mode (file\_write\_unknown\_target) | 2,140 | Legitimate file output — not targeting test/score files |
+| Forbidden import 'subprocess' | 1,465 | Legitimate agent use (file operations, shell commands) |
+| Destructive call +70 (os.system, os.popen, os.kill) | ~631 | Legitimate system calls in automation tasks |
+| High literal count (≥80) | ~600 | Large data structures in legitimate code |
 | Stack introspection (inspect.currentframe) | ~400 | Some legitimate uses in agents |
 
 ---
@@ -190,8 +191,8 @@ Direct comparison is limited because each tool covers different categories, uses
 | GPT-4.5 (high reasoning) | LLM-as-judge | TRACE (all 54 cats) | Detection Rate | 63% |
 | RewardHackWatch | ML + Regex + AST | MALT (5,391) | F1 | 89.7% |
 | **ast-guard v2.0 Pair Mode** | **Deterministic AST** | **TRACE (structural)** | **F1** | **95.7%** |
-| **ast-guard v2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **78.5%** |
-| **ast-guard v2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **45.8%** |
+| **ast-guard v2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **84.2%** |
+| **ast-guard v2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **43.9%** |
 
 Key differentiators:
 - **Zero cost at inference time** — no LLM calls, no model weights
@@ -224,7 +225,7 @@ Key differentiators:
 
 ```
 Python: 3.11+
-ast-guard commit: 2187de8  (v1.5.0 / v2.0.0 evaluation branch)
+ast-guard commit: feb3605  (v2.0 post-calibration, iterations 7-10)
 tree-sitter: required for multilang (pip install ast-guard[multilang])
 MALT dataset: metr-evals/malt-public (HuggingFace, public)
 ```
