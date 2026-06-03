@@ -23,7 +23,7 @@ def _long_string_findings(strings, tree, long_string_len):
         findings.append({
             "severity": "WARNING",
             "line": line_no,
-            "explanation": f"Long string constant ({len(s)} chars > {long_string_len}): {s[:40]}...",
+            "explanation": f"New long string constant (length: {len(s)} > {long_string_len} chars) detected: {s[:40]}...",
         })
     return findings
 
