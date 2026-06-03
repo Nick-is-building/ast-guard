@@ -434,6 +434,33 @@ def risk_score_standalone(
     safe_ids = _build_safe_call_ids(tree, var_map)
 
     # -----------------------------------------------------------------------
+    # TAINT PASS
+    # -----------------------------------------------------------------------
+    # Intra-file taint analysis. Catches forbidden references that escape the
+    # direct-call detectors below by flowing through function returns, class
+    # attributes, setattr(), globals(), and closures. Imported lazily to
+    # avoid a circular import: ast_guard.taint depends on checks.is_blocked_call,
+    # and ast_guard.checks already imports analyzer helpers.
+    from ast_guard.taint import collect_tainted_names, find_tainted_calls
+
+    _TAINT_PATTERN = {
+        "return": "taint_return",
+        "class_attr": "taint_class_attr",
+        "setattr": "taint_setattr",
+        "globals": "taint_globals",
+        "closure": "taint_closure",
+        "propagated": "taint_propagated",
+    }
+    tainted_names = collect_tainted_names(tree, imported_modules)
+    for name, src in tainted_names.items():
+        pattern = _TAINT_PATTERN.get(src.source_type, "taint_propagated")
+        add(pattern, src.score, src.line,
+            f"Tainted name '{name}' aliases '{src.origin}'.")
+    for call_node, key, src in find_tainted_calls(tree, tainted_names):
+        add("tainted_call", 70, getattr(call_node, "lineno", None),
+            f"Call to tainted name '{key}' which aliases '{src.origin}'.")
+
+    # -----------------------------------------------------------------------
     # LOW RISK (+10)
     # -----------------------------------------------------------------------
 
