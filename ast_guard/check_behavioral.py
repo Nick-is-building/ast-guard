@@ -603,6 +603,25 @@ def risk_score_standalone(
                 add("ctypes_usage", 30, getattr(node, "lineno", None),
                     f"ctypes usage: '{fname}'.")
 
+    # Destructive OS/shutil calls
+    _DESTRUCTIVE_CRITICAL = frozenset({
+        "os.system", "os.popen", "os.kill", "os.killpg",
+    })
+    _DESTRUCTIVE_HIGH = frozenset({
+        "os.remove", "os.unlink", "os.chmod", "os.chown",
+        "os.rename", "os.truncate",
+        "shutil.rmtree", "shutil.move", "shutil.copytree",
+    })
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and id(node) not in safe_ids:
+            fname = _call_name(node.func)
+            if fname in _DESTRUCTIVE_CRITICAL:
+                add("destructive_call", 70, getattr(node, "lineno", None),
+                    f"Arbitrary command execution or process kill: '{fname}'.")
+            elif fname in _DESTRUCTIVE_HIGH:
+                add("destructive_call", 50, getattr(node, "lineno", None),
+                    f"Destructive filesystem operation: '{fname}'.")
+
     # -----------------------------------------------------------------------
     # HIGH RISK (+50)
     # -----------------------------------------------------------------------
