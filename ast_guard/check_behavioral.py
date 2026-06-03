@@ -328,6 +328,22 @@ def _is_safe_dir_call(call_node: ast.Call) -> bool:
     )
 
 
+def _is_safe_destructive_target(call_node: ast.Call, var_map: dict) -> bool:
+    """True when the first arg resolves to a path clearly within the agent's workspace.
+
+    Relative paths (no leading /) and /tmp targets are considered safe.
+    Unresolvable arguments and absolute paths outside /tmp are not.
+    """
+    if not call_node.args:
+        return False
+    path = _resolve_expr(call_node.args[0], var_map)
+    if path is None:
+        return False
+    if not path.startswith("/"):
+        return True  # relative path → agent workspace
+    return path == "/tmp" or path.startswith("/tmp/")
+
+
 def _build_safe_call_ids(tree: ast.Module, var_map: dict) -> set:
     """Pre-scan: collect ids of Call nodes that are explicitly safe."""
     safe: set = set()
@@ -619,8 +635,9 @@ def risk_score_standalone(
                 add("destructive_call", 70, getattr(node, "lineno", None),
                     f"Arbitrary command execution or process kill: '{fname}'.")
             elif fname in _DESTRUCTIVE_HIGH:
-                add("destructive_call", 50, getattr(node, "lineno", None),
-                    f"Destructive filesystem operation: '{fname}'.")
+                if not _is_safe_destructive_target(node, var_map):
+                    add("destructive_call", 50, getattr(node, "lineno", None),
+                        f"Destructive filesystem operation: '{fname}'.")
 
     # -----------------------------------------------------------------------
     # HIGH RISK (+50)
