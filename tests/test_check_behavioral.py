@@ -583,3 +583,90 @@ class TestScanStandaloneIntegration:
         from ast_guard import scan_standalone
         result = scan_standalone("eval(user_input)", language="python")
         assert result["verdict"] == "CRITICAL"
+
+
+# ===========================================================================
+# Filename resolution through os.path.join, pathlib.Path, and f-strings
+# ===========================================================================
+
+class TestFilenameResolution:
+    """_resolve_filename must resolve compound path expressions so that writes
+    to expected-output paths (.csv, .json, .log) are CLEAN rather than
+    falling back to file_write_unknown_target."""
+
+    def _findings_patterns(self, result):
+        c6 = result["checks"]["check_6_behavioral"]
+        return [f["explanation"] for f in c6["findings"]]
+
+    def test_os_path_join_literal_args(self):
+        from ast_guard import scan_standalone
+        code = 'import os\nopen(os.path.join("data", "out.csv"), "w")'
+        result = scan_standalone(code, mode="strict")
+        assert result["verdict"] == "CLEAN", (
+            f"Expected CLEAN, got {result['verdict']}. "
+            f"Findings: {self._findings_patterns(result)}"
+        )
+        # Must not have fallen back to the unknown-target catch-all
+        for expl in self._findings_patterns(result):
+            assert "file_write_unknown_target" not in expl, (
+                f"Unexpected file_write_unknown_target: {expl}"
+            )
+
+    def test_os_path_join_var_arg(self):
+        from ast_guard import scan_standalone
+        code = 'import os\nout_dir = "results"\nopen(os.path.join(out_dir, "x.json"), "w")'
+        result = scan_standalone(code, mode="strict")
+        assert result["verdict"] == "CLEAN", (
+            f"Expected CLEAN, got {result['verdict']}. "
+            f"Findings: {self._findings_patterns(result)}"
+        )
+        for expl in self._findings_patterns(result):
+            assert "file_write_unknown_target" not in expl, expl
+
+    def test_pathlib_path_single_arg(self):
+        from ast_guard import scan_standalone
+        code = 'from pathlib import Path\nopen(Path("logs/run.log"), "w")'
+        result = scan_standalone(code, mode="strict")
+        assert result["verdict"] == "CLEAN", (
+            f"Expected CLEAN, got {result['verdict']}. "
+            f"Findings: {self._findings_patterns(result)}"
+        )
+        for expl in self._findings_patterns(result):
+            assert "file_write_unknown_target" not in expl, expl
+
+    def test_fstring_with_known_var(self):
+        from ast_guard import scan_standalone
+        code = 'name = "data"\nopen(f"results_{name}.csv", "w")'
+        result = scan_standalone(code, mode="strict")
+        assert result["verdict"] == "CLEAN", (
+            f"Expected CLEAN, got {result['verdict']}. "
+            f"Findings: {self._findings_patterns(result)}"
+        )
+        for expl in self._findings_patterns(result):
+            assert "file_write_unknown_target" not in expl, expl
+
+    def test_fstring_with_call_stays_unknown(self):
+        from ast_guard import scan_standalone
+        code = 'from datetime import datetime\nopen(f"results_{datetime.now()}.csv", "w")'
+        result = scan_standalone(code, mode="strict")
+        # Score should be 10 (file_write_unknown_target only) → CLEAN overall,
+        # but the unknown-target finding must be present.
+        c6 = result["checks"]["check_6_behavioral"]
+        patterns_in_explanations = " ".join(
+            f["explanation"] for f in c6["findings"]
+        )
+        assert "file_write_unknown_target" in patterns_in_explanations, (
+            f"Expected file_write_unknown_target finding. "
+            f"Got: {c6['findings']}"
+        )
+
+    def test_string_concatenation(self):
+        from ast_guard import scan_standalone
+        code = 'open("data" + "/" + "x.csv", "w")'
+        result = scan_standalone(code, mode="strict")
+        assert result["verdict"] == "CLEAN", (
+            f"Expected CLEAN, got {result['verdict']}. "
+            f"Findings: {self._findings_patterns(result)}"
+        )
+        for expl in self._findings_patterns(result):
+            assert "file_write_unknown_target" not in expl, expl

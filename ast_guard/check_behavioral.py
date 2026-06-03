@@ -12,6 +12,7 @@ Thresholds:
 """
 import ast
 import os as _os
+import posixpath
 from typing import Optional
 
 __all__ = ["risk_score_standalone", "is_safe_subprocess"]
@@ -165,16 +166,65 @@ def _build_simple_assignments(tree: ast.Module) -> dict:
     return result
 
 
+def _resolve_expr(node: ast.expr, var_map: dict) -> Optional[str]:
+    """Recursively resolve an AST expression to a string constant, or None if ambiguous.
+
+    Handles: string literals, Name lookups, os.path.join(), pathlib.Path(),
+    f-strings with simple substitutions, and string concatenation via +.
+    Always returns posix-style paths (/ separator) regardless of host OS so
+    that resolved strings never leak host state into telemetry fingerprints.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return var_map.get(node.id)
+    if isinstance(node, ast.Call):
+        fname = _call_name(node.func)
+        if fname == "os.path.join":
+            if not node.args:
+                return None
+            parts = [_resolve_expr(a, var_map) for a in node.args]
+            if any(p is None for p in parts):
+                return None
+            return posixpath.join(*parts)
+        if fname in ("pathlib.Path", "Path"):
+            if not node.args:
+                return None
+            parts = [_resolve_expr(a, var_map) for a in node.args]
+            if any(p is None for p in parts):
+                return None
+            return posixpath.join(*parts)
+    if isinstance(node, ast.JoinedStr):
+        # f-string: only resolve when every interpolation is a simple constant or var
+        parts = []
+        for val in node.values:
+            if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                parts.append(val.value)
+            elif isinstance(val, ast.FormattedValue):
+                inner = val.value
+                # Calls and attribute accesses are treated as unresolvable
+                if isinstance(inner, (ast.Call, ast.Attribute)):
+                    return None
+                resolved = _resolve_expr(inner, var_map)
+                if resolved is None:
+                    return None
+                parts.append(resolved)
+            else:
+                return None
+        return "".join(parts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _resolve_expr(node.left, var_map)
+        right = _resolve_expr(node.right, var_map)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
+
 def _resolve_filename(call_node: ast.Call, var_map: dict) -> Optional[str]:
     """Resolve the first arg of open(); return None if unresolvable."""
     if not call_node.args:
         return None
-    first = call_node.args[0]
-    if isinstance(first, ast.Constant) and isinstance(first.value, str):
-        return first.value
-    if isinstance(first, ast.Name):
-        return var_map.get(first.id)
-    return None
+    return _resolve_expr(call_node.args[0], var_map)
 
 
 def _is_open_call(node) -> bool:
