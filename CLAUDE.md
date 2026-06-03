@@ -162,7 +162,4 @@ via the existing extractor at `benchmarks/loaders/malt_loader.py`.
 
 ## Known open issues
 
-- Missing `dict_literal_max` guard in allowlist config, parallel to
-  `set_literal_max`, to block Data Structure Swap override on oversized
-  dict literals. The metric is collected (`max_dict_literal_size`) but
-  the config threshold key and allowlist enforcement are not yet wired.
+- None currently tracked.
