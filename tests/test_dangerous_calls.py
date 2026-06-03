@@ -187,7 +187,7 @@ def test_60_literals_no_behavioral_signals_clean():
 
 
 def test_60_literals_with_behavioral_signals_warning():
-    # 60 dict literals + subprocess.run(shell=True) → check_6 score > 0 → threshold 50 → WARNING
+    # 60 dict literals + subprocess.run(shell=True) → check_6 score == 30 >= 30 → threshold 50 → WARNING
     code = "import subprocess\nsubprocess.run('ls', shell=True)\n" + _make_dict_code(30)
     result = scan_standalone(code, mode="strict")
     c1 = result["checks"]["check_1_hardcoding"]
