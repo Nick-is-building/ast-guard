@@ -83,3 +83,21 @@ def test_aliased_import_stays_critical():
     result = scan_standalone(code, mode="strict")
     # We cannot track calls through the alias, so the conservative path fires.
     assert result["verdict"] == "CRITICAL", result
+
+
+# --- literal threshold (standalone: 80) -------------------------------------
+
+def test_60_literals_is_clean():
+    # 60 literals is below the standalone threshold of 80; must be CLEAN.
+    literals = "\n".join(f'x_{i} = {i}' for i in range(60))
+    result = scan_standalone(literals, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+def test_85_literals_is_warning():
+    # 85 literals exceeds the standalone threshold of 80; must be at least WARNING.
+    literals = "\n".join(f'x_{i} = {i}' for i in range(85))
+    result = scan_standalone(literals, mode="strict")
+    assert result["verdict"] in ("WARNING", "CRITICAL"), result
+    c1 = result["checks"]["check_1_hardcoding"]
+    assert any("80" in f["explanation"] for f in c1["findings"]), c1

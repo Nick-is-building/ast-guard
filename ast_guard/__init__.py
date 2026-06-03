@@ -478,11 +478,11 @@ def scan_standalone(
                 })
 
     lit_gen = gen_metrics.get("literal_count", 0)
-    if lit_gen > 50:
+    if lit_gen > 80:
         check_1_findings.append({
             "severity": "WARNING", "line": None,
             "explanation": (
-                f"High literal count: {lit_gen} literals (standalone threshold: 50)."
+                f"High literal count: {lit_gen} literals (standalone threshold: 80)."
             ),
         })
 

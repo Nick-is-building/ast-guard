@@ -104,7 +104,7 @@ complexity_abs_min         5
 set_literal_max            15
 enumeration_ratio          0.70
 enumeration_min_ifs        5
-standalone literal_thr     50
+standalone literal_thr     80
 ```
 
 Config hierarchy: CLI args > `.ast-guard.toml` > `~/.ast-guard/config.toml` > defaults.
