@@ -69,8 +69,8 @@ def log_scan(orig_hash: str, gen_hash: str, orig_metrics: dict, gen_metrics: dic
         "mode": mode,
         "verdict": verdict,
         "confidence": confidence,
-        "orig_metrics": {k: v for k, v in orig_metrics.items() if k not in ("import_list", "call_list")},
-        "gen_metrics": {k: v for k, v in gen_metrics.items() if k not in ("import_list", "call_list")},
+        "orig_metrics": {k: v for k, v in orig_metrics.items() if k not in ("import_list", "call_list", "function_complexities", "enumeration_analysis")},
+        "gen_metrics": {k: v for k, v in gen_metrics.items() if k not in ("import_list", "call_list", "function_complexities", "enumeration_analysis")},
         "check_results": {k: v["status"] for k, v in check_results.items()},
         "transformations": [t["category"] for t in transformations]
     }
