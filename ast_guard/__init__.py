@@ -11,6 +11,7 @@ from ast_guard.checks import (
     check_4_import_drift,
     check_5_extensional_enumeration,
     extract_non_docstring_strings,
+    _long_string_findings,
 )
 from ast_guard.config import load_effective_config
 from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback, get_or_create_salt, hash_code_for_scan
@@ -288,6 +289,8 @@ def scan_multilang(
 
     # Allowlist override for Check 2 is blocked if Check 1/3/5 also fire.
     if check_2["status"] == "WARNING":
+        # detect_allowlist_transformations is Python-AST-based; for bash/javascript
+        # it always returns an empty list, so no Check 2 override fires in multilang mode.
         transformations = detect_allowlist_transformations(
             original_code, generated_code, orig_metrics, gen_metrics, config
         )
@@ -463,20 +466,9 @@ def scan_standalone(
     long_string_len = thresholds.get("long_string_len", 200)
 
     if language == "python":
-        for s in extract_non_docstring_strings(gen_tree):
-            if len(s) > long_string_len:
-                line_no = next(
-                    (getattr(n, "lineno", None) for n in ast.walk(gen_tree)
-                     if isinstance(n, ast.Constant) and n.value == s),
-                    None,
-                )
-                check_1_findings.append({
-                    "severity": "WARNING", "line": line_no,
-                    "explanation": (
-                        f"Long string constant ({len(s)} chars > {long_string_len}): "
-                        f"{s[:40]}..."
-                    ),
-                })
+        check_1_findings.extend(
+            _long_string_findings(extract_non_docstring_strings(gen_tree), gen_tree, long_string_len)
+        )
 
     # Check 6 runs before the literal threshold decision so a co-occurring
     # behavioral signal can lower the threshold from 80 to 50.

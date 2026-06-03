@@ -11,6 +11,22 @@ def extract_non_docstring_strings(tree):
                 strings.add(node.value)
     return strings
 
+def _long_string_findings(strings, tree, long_string_len):
+    """Return WARNING findings for each string in `strings` that exceeds long_string_len chars."""
+    long_strings = sorted(s for s in strings if len(s) > long_string_len)
+    if not long_strings:
+        return []
+    lineno_idx = build_lineno_index(tree)
+    findings = []
+    for s in long_strings:
+        line_no = lineno_idx["strings"].get(s)
+        findings.append({
+            "severity": "WARNING",
+            "line": line_no,
+            "explanation": f"Long string constant ({len(s)} chars > {long_string_len}): {s[:40]}...",
+        })
+    return findings
+
 def get_subscript_string(node):
     """
     Retrieves string value from ast.Subscript slice.
@@ -84,19 +100,7 @@ def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
     long_string_len = thresholds.get("long_string_len", 200)
     orig_strings = extract_non_docstring_strings(orig_tree)
     gen_strings = extract_non_docstring_strings(gen_tree)
-    
-    long_new_strings = sorted(
-        s for s in (gen_strings - orig_strings) if len(s) > long_string_len
-    )
-    if long_new_strings:
-        _lineno_idx = build_lineno_index(gen_tree)
-        for s in long_new_strings:
-            line_no = _lineno_idx["strings"].get(s)
-            findings.append({
-                "severity": "WARNING",
-                "line": line_no,
-                "explanation": f"New long string constant (length: {len(s)} > {long_string_len} chars) detected: {s[:40]}..."
-            })
+    findings.extend(_long_string_findings(gen_strings - orig_strings, gen_tree, long_string_len))
             
     status = "WARNING" if findings else "CLEAN"
     return {
