@@ -2,15 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+- Confidence score (0-100) in scan results, SARIF output, and telemetry for triage and Precision@k workflows
+- Intra-file taint tracking: cross-function returns, class attributes, setattr, globals(), and closure bypass detection
+- Destructive OS/shutil call detection in Check 6: os.system/os.popen (+70), os.remove/shutil.rmtree (+50) with context-aware safe-target exclusions
+- `__import__()` added to standalone Check 3 forbidden call filter
+
+### Changed
+- Telemetry: code is hashed at API boundary; log_scan no longer receives plaintext
+- Standalone: subprocess import with all-safe calls is now silent (CLEAN) instead of WARNING
+- Standalone: literal threshold raised from 50 to 80, with conditional drop to 50 when check_6 score >= 30
+- Standalone: destructive filesystem calls on relative paths or /tmp targets score +0 (safe context)
+- Check 6: filename resolution now handles os.path.join, pathlib.Path, and f-strings
+
 ### Fixed
 - Telemetry: deterministic fingerprint for dict-valued metrics (function_complexities)
 - Output/CLI: replaced hardcoded "v1.3" strings with dynamic __version__
 - Check 3: deduplicated alias findings in fixpoint loop
-
-### Changed
-- Telemetry: code is hashed at API boundary; log_scan no longer receives plaintext
-- Standalone: subprocess import downgraded to WARNING when all calls are structurally safe
-- Check 6: filename resolution now handles os.path.join, pathlib.Path, and f-strings
+- Conditional literal threshold: tightened from check_6 score > 0 to >= 30 to prevent file_write_unknown_target triggering low threshold
 
 ### Performance
 - Analyzer: single-pass lineno index replaces per-finding AST walks

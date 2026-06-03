@@ -13,7 +13,7 @@ structural reward-hacking patterns in source code BEFORE it executes.
 Pure AST analysis. No LLM, no ML, no network calls in the scan path.
 Mean scan time 4.7 ms. Zero external dependencies in the Python core.
 
-Status: v2.0.0, ~10k LOC, 194 passing tests + 9 skipped (MCP extra).
+Status: v2.0.0, ~10k LOC, 316 passing tests + 8 skipped (MCP extra).
 
 ## Why it exists
 
@@ -39,6 +39,8 @@ ast_guard/
   checks.py            Checks 1-5 (pair mode)
   check_behavioral.py  Check 6 (standalone risk scoring, ~800 LOC)
   allowlist.py         Legitimate transformation detection
+  confidence.py        Confidence score (0-100) for triage workflows
+  taint.py             Intra-file taint tracking for cross-function bypasses
   multilang.py         Language dispatch (python/bash/javascript)
   lang_bash.py         Bash adapter (tree-sitter, preview-quality)
   lang_javascript.py   JS/TS adapter (tree-sitter, preview-quality)
@@ -57,7 +59,7 @@ benchmarks/
   structural_benchmark/   36 hand-curated ground-truth pairs (100% F1)
   run_benchmark.py     unified runner
 
-tests/                 194 passing, 9 skipped (MCP extra)
+tests/                 316 passing, 8 skipped (MCP extra)
 examples/              5 annotated original/generated pairs per check family
 .github/actions/       reusable composite action with SARIF upload
 ```
@@ -77,7 +79,7 @@ examples/              5 annotated original/generated pairs per check family
 ## Operating modes
 
 - `scan(orig, gen, mode=...)` — pair mode, all 5 checks active.
-- `scan_standalone(code, mode=...)` — single block, no baseline. Check 2 inactive, Check 6 primary. Threshold lifts: literal_threshold=50, os/sys removed from CRITICAL imports, ~100 ML libraries on safelist.
+- `scan_standalone(code, mode=...)` — single block, no baseline. Check 2 inactive, Check 6 primary. Threshold lifts: literal_threshold=80 (conditional 50 when check_6 score >= 30), os/sys removed from CRITICAL imports, ~100 ML libraries on safelist.
 - `scan_multilang(orig, gen, language=...)` — bash/javascript via tree-sitter adapters.
 
 Sensitivity: `strict` (blocks CRITICAL) / `standard` (downgrades non-Check-3 CRITICALs to WARNING) / `audit` (silent, telemetry only).
@@ -104,7 +106,7 @@ complexity_abs_min         5
 set_literal_max            15
 enumeration_ratio          0.70
 enumeration_min_ifs        5
-standalone literal_thr     80
+standalone literal_thr     80 (conditional 50 when check_6 score >= 30)
 ```
 
 Config hierarchy: CLI args > `.ast-guard.toml` > `~/.ast-guard/config.toml` > defaults.
@@ -117,7 +119,7 @@ Config hierarchy: CLI args > `.ast-guard.toml` > `~/.ast-guard/config.toml` > de
 | TRACE built-in | pair | 33 | 95.7% F1, 100% precision |
 | School of Reward Hacks | pair | 26 | 96.2% recall |
 | Countdown-Code | pair | 15,894 | 99.0% TNR |
-| MALT (METR) | standalone | 81,515 | 78.5% specificity, 72.0% hardcoded, 44.3% bypass_constraints |
+| MALT (METR) | standalone | 81,515 | 84.2% specificity, 70.9% hardcoded, 41.7% bypass_constraints |
 
 Full methodology + 6-iteration calibration history: `benchmarks/METHODOLOGY.md`.
 
@@ -127,7 +129,7 @@ Full methodology + 6-iteration calibration history: `benchmarks/METHODOLOGY.md`.
 python3 -m pytest tests/ -v
 ```
 
-Expect 194 passed, 9 skipped (MCP extra not installed).
+Expect 316 passed, 8 skipped (MCP extra not installed).
 
 Reproduce benchmarks:
 ```

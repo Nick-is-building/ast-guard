@@ -60,9 +60,9 @@ All results are fully reproducible. See [benchmarks/RESULTS.md](benchmarks/RESUL
 | TRACE taxonomy (Deshpande et al. 2026) | Pair | 33 | F1 | **95.7%** |
 | School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** |
 | Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** |
-| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity | **78.5%** |
-| MALT — hardcoded_solution category | Standalone | 429 | Detection Rate | **72.0%** |
-| MALT — bypass_constraints category | Standalone | 2,379 | Detection Rate | **44.3%** |
+| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity | **84.2%** |
+| MALT — hardcoded_solution category | Standalone | 429 | Detection Rate | **70.9%** |
+| MALT — bypass_constraints category | Standalone | 2,379 | Detection Rate | **41.7%** |
 
 **Performance:** mean 4.7ms per scan, ~210 samples/second, zero API cost.
 
@@ -117,7 +117,7 @@ In strict mode, CRITICAL blocks execution. In standard mode, everything is logge
 ```bash
 git clone https://github.com/Nick-is-building/ast-guard.git
 cd ast-guard
-python -m pytest tests/ -v  # 225 tests
+python -m pytest tests/ -v  # 316 tests
 ```
 
 ### Python API
@@ -257,7 +257,7 @@ Full scientific documentation lives in the benchmarks directory:
 
 [benchmarks/RESULTS.md](benchmarks/RESULTS.md) — precision, recall, F1, confusion matrices, comparison table across all datasets.
 
-[benchmarks/METHODOLOGY.md](benchmarks/METHODOLOGY.md) — the complete 6-iteration calibration history showing how standalone mode was tuned from 95% false positive rate to 21.5%, with rationale for every decision. This serves as an ablation study.
+[benchmarks/METHODOLOGY.md](benchmarks/METHODOLOGY.md) — the complete 6-iteration calibration history showing how standalone mode was tuned from 95% false positive rate to 15.8%, with rationale for every decision. This serves as an ablation study.
 
 [benchmarks/structural_benchmark/](benchmarks/structural_benchmark/) — 36 curated ground-truth code pairs across 12 structural hack categories. 100% F1, 4.7ms mean scan time. Fully reproducible.
 
@@ -321,7 +321,7 @@ telemetry = false
 
 ## Known Limitations
 
-**Standalone mode has lower precision than pair mode.** Without a baseline, contextual disambiguation is harder. The 21.5% false positive rate on normal MALT samples is the current calibration point — intentionally conservative to avoid missing real hacks. For context, industry SAST tools such as CodeQL and Infer report false alarm rates exceeding 95% on large codebases (Du et al., arXiv:2601.18844), making ast-guard's 21.5% FPR competitive for a zero-cost deterministic layer.
+**Standalone mode has lower precision than pair mode.** Without a baseline, contextual disambiguation is harder. The 15.8% false positive rate on normal MALT samples is the current calibration point — intentionally conservative to avoid missing real hacks. For context, industry SAST tools such as CodeQL and Infer report false alarm rates exceeding 95% on large codebases (Du et al., arXiv:2601.18844), making ast-guard's 15.8% FPR competitive for a zero-cost deterministic layer.
 
 **Semantic hacks are outside scope by design.** Code that is structurally normal but logically wrong, produces subtly incorrect results, or games a task specification without a structural trace requires semantic understanding. This is the job of LLM-based reviewers and downstream test suites. ast-guard and semantic reviewers are meant to work together.
 
@@ -381,6 +381,8 @@ ast-guard/
 │   ├── checks.py             # Checks 1–5
 │   ├── check_behavioral.py   # Check 6: behavioral risk scoring
 │   ├── allowlist.py          # Legitimate transformation detection
+│   ├── confidence.py         # Confidence score (0-100) for triage workflows
+│   ├── taint.py              # Intra-file taint tracking for cross-function bypasses
 │   ├── lang_bash.py          # Bash adapter (tree-sitter)
 │   ├── lang_javascript.py    # JavaScript adapter (tree-sitter)
 │   ├── multilang.py          # Language detection and dispatch
@@ -394,7 +396,7 @@ ast-guard/
 │   ├── structural_benchmark/ # 36 curated ground-truth samples, 100% F1
 │   ├── loaders/              # Dataset loaders (MALT, TRACE, Countdown-Code, etc.)
 │   └── run_benchmark.py      # Benchmark runner
-├── tests/                    # 225 tests across all modules
+├── tests/                    # 316 tests across all modules
 ├── examples/                 # Five annotated code pair examples
 ├── cli.py                    # CLI entry point
 ├── ALLOWLIST.md              # Documented rationales for legitimate transformations
