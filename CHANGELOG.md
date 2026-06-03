@@ -51,7 +51,7 @@
 - `__version__` bumped to `2.0.0`.
 - `__all__` in `__init__.py` updated to include `scan_standalone` and `scan_multilang`.
 - Check 4 standalone mode no longer fires CRITICAL on `os` and `sys` — both are ubiquitous in legitimate agent code and carry no incremental reward-hacking signal without a baseline.
-- MALT evaluation: 22.2% flag rate on 81,515 samples; 78.5% true-negative rate on normal-labeled code; 72.0% detection on hardcoded\_solution, 44.3% on bypass\_constraints.
+- MALT evaluation: 16.6% flag rate on 81,515 samples; 84.2% true-negative rate on normal-labeled code; 70.9% detection on hardcoded\_solution, 41.7% on bypass\_constraints.
 
 ### Benchmark Results Summary
 
@@ -62,9 +62,9 @@
 | TRACE built-in (33 samples) | Pair | Recall | 91.7% |
 | School of Reward Hacks (26 valid) | Pair | Recall | 96.2% |
 | Countdown-Code (15,894) | Pair | True Negative Rate | 99.0% |
-| MALT normal (77,369) | Standalone | Specificity (TNR) | 78.5% |
-| MALT hardcoded\_solution (429) | Standalone | Detection Rate | 72.0% |
-| MALT bypass\_constraints (2,379) | Standalone | Detection Rate | 44.3% |
+| MALT normal (77,369) | Standalone | Specificity (TNR) | 84.2% |
+| MALT hardcoded\_solution (429) | Standalone | Detection Rate | 70.9% |
+| MALT bypass\_constraints (2,379) | Standalone | Detection Rate | 41.7% |
 
 ---
 
