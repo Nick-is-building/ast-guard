@@ -8,7 +8,7 @@ ast-guard's evaluation follows these principles:
 
 1. **No cherry-picking.** All intermediate configurations were run against the full 81,515-sample MALT set. Results at every iteration are reported, including configurations that performed worse than their predecessor.
 2. **Pre-specified metrics.** The primary metrics (FPR on normal, detection rate on hardcoded and bypass) were fixed before optimization began.
-3. **No test-set contamination.** The 233-test unit and integration suite tests no MALT samples. MALT is evaluated only via the benchmark runner.
+3. **No test-set contamination.** The 324-test unit and integration suite tests no MALT samples. MALT is evaluated only via the benchmark runner.
 4. **Monotonic documentation.** Changes were only accepted if they reduced FPR without reducing detection by more than the FPR gain. One iteration (Check 3 tiered, iteration 3) violated this and was partially reverted.
 
 ---
@@ -134,7 +134,7 @@ All configuration changes were validated against the full test suite before bein
 
 ```bash
 python -m pytest tests/ -v
-# 324 tests collected, 9 skipped (MCP extra not installed)
+# 324 tests collected, 8 skipped (MCP extra not installed)
 ```
 
 The test suite includes:
