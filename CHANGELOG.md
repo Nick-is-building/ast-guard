@@ -1,5 +1,22 @@
 # CHANGELOG.md - ast-guard
 
+## [Unreleased]
+
+### Fixed
+- Telemetry: deterministic fingerprint for dict-valued metrics (function_complexities)
+- Output/CLI: replaced hardcoded "v1.3" strings with dynamic __version__
+- Check 3: deduplicated alias findings in fixpoint loop
+
+### Changed
+- Telemetry: code is hashed at API boundary; log_scan no longer receives plaintext
+- Standalone: subprocess import downgraded to WARNING when all calls are structurally safe
+- Check 6: filename resolution now handles os.path.join, pathlib.Path, and f-strings
+
+### Performance
+- Analyzer: single-pass lineno index replaces per-finding AST walks
+
+---
+
 ## [2.0.0] - 2026-05-31
 
 ### Added

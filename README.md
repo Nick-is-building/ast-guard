@@ -44,6 +44,12 @@ The gate supports two modes: **Pair Mode** compares original code against LLM-ge
 
 ---
 
+## Architectural Role
+
+ast-guard is designed as a deterministic pre-filter that reduces the workload of downstream LLM-based reviewers. By eliminating structurally obvious hacks before they reach a semantic reviewer, it narrows the surface each reviewer must reason about. ZeroFalse (Iranmanesh et al., arXiv:2510.02534, 2025) showed that introducing calibrated confidence levels for static-analysis findings improves triage efficiency without reducing coverage. Buglens (arXiv:2504.11711, 2025) reports a 7-fold precision improvement when LLMs validate static-analysis findings rather than replace them — confirming that the combination outperforms either approach alone.
+
+---
+
 ## Key Results
 
 All results are fully reproducible. See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for full methodology, confusion matrices, and per-category breakdowns.
@@ -315,7 +321,7 @@ telemetry = false
 
 ## Known Limitations
 
-**Standalone mode has lower precision than pair mode.** Without a baseline, contextual disambiguation is harder. The 21.5% false positive rate on normal MALT samples is the current calibration point — intentionally conservative to avoid missing real hacks.
+**Standalone mode has lower precision than pair mode.** Without a baseline, contextual disambiguation is harder. The 21.5% false positive rate on normal MALT samples is the current calibration point — intentionally conservative to avoid missing real hacks. For context, industry SAST tools such as CodeQL and Infer report false alarm rates exceeding 95% on large codebases (Du et al., arXiv:2601.18844), making ast-guard's 21.5% FPR competitive for a zero-cost deterministic layer.
 
 **Semantic hacks are outside scope by design.** Code that is structurally normal but logically wrong, produces subtly incorrect results, or games a task specification without a structural trace requires semantic understanding. This is the job of LLM-based reviewers and downstream test suites. ast-guard and semantic reviewers are meant to work together.
 
@@ -327,7 +333,7 @@ telemetry = false
 
 ## Future Direction
 
-ast-guard currently operates on code. The deeper research question is whether deterministic static analysis can be extended to all structured LLM outputs — SQL queries, JSON responses, YAML configurations, API call sequences, tool-use traces. Any structured output can be manipulated. Any structured output has analyzable structural properties that can be evaluated before that output takes effect. Extending the pre-execution gate concept beyond code is an open research problem. If you are working on LLM safety, evaluation integrity, or agentic systems and want to explore this direction, collaboration is welcome.
+ast-guard currently operates on code. The deeper research question is whether deterministic static analysis can be extended to all structured LLM outputs — SQL queries, JSON responses, YAML configurations, API call sequences, tool-use traces. Any structured output can be manipulated. Any structured output has analyzable structural properties that can be evaluated before that output takes effect. Extending the pre-execution gate concept beyond code is an open research problem. If you are working on LLM safety, evaluation integrity, or agentic systems and want to explore this direction, collaboration is welcome. Evaluation against the Reward Hacking Benchmark (RHB; Thaman et al. 2026, arXiv:2605.02964) chained tool-use tasks is planned as a next step to measure ast-guard's coverage on multi-step agentic exploit sequences.
 
 ---
 
@@ -344,6 +350,10 @@ ast-guard currently operates on code. The deeper research question is whether de
 **MacDiarmid et al.** ([arXiv:2511.18397](https://arxiv.org/abs/2511.18397)) — Demonstrates that reward hacking in production RL generalizes to alignment faking and sabotage. Establishes the safety stakes for detection.
 
 **Baker et al. / OpenAI** ([arXiv:2503.11926](https://arxiv.org/abs/2503.11926)) — Chain-of-thought monitoring for reasoning models. Shows that optimization pressure against visible bad reasoning causes models to hide intent rather than change behavior — strengthening the case for structural analysis that cannot be deceived by reasoning traces.
+
+**Wang et al.** (2025, [arXiv:2510.01367](https://arxiv.org/abs/2510.01367), "Is It Thinking or Cheating?") — Introduces a different TRACE acronym: reasoning-effort-based detection of chain-of-thought monitoring evasion. Not to be confused with the TRACE reward-hacking taxonomy and benchmark from Deshpande et al. 2026 that ast-guard evaluates against.
+
+**Reward Hacking Benchmark / RHB** (Thaman et al. 2026, [arXiv:2605.02964](https://arxiv.org/abs/2605.02964)) — Multi-step tool-use benchmark across 13 frontier models with exploit rates ranging from 0 to 13.9%. ast-guard plans to evaluate against RHB in a future release to measure coverage on chained agentic exploit sequences.
 
 ---
 
