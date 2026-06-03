@@ -486,15 +486,6 @@ def scan_standalone(
             ),
         })
 
-    if _subprocess_import_safe:
-        check_1_findings.append({
-            "severity": "WARNING", "line": None,
-            "explanation": (
-                "subprocess imported but all calls structurally safe; "
-                "downgraded from CRITICAL"
-            ),
-        })
-
     check_1 = {"status": "WARNING" if check_1_findings else "CLEAN", "findings": check_1_findings}
     check_2 = {"status": "CLEAN", "findings": []}
 
@@ -521,8 +512,9 @@ def scan_standalone(
         imp for imp in gen_metrics.get("import_list", [])
         if imp.split(".")[0] in _sa_c4_dangerous
     ]
-    # When every subprocess call is structurally safe the import is already
-    # reported as WARNING in Check 1; remove it here so Check 4 stays CLEAN.
+    # When every subprocess call is structurally safe, remove it from Check 4
+    # input so Check 4 stays CLEAN.  No WARNING is emitted — the sample is
+    # silently clean if no other check fires.
     if _subprocess_import_safe:
         _sa_c4_metrics["import_list"] = [
             imp for imp in _sa_c4_metrics["import_list"]

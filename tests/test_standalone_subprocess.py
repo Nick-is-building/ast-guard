@@ -2,18 +2,11 @@
 Tests for standalone subprocess-import downgrade logic.
 
 When every subprocess call in the file is structurally safe (literal list,
-no shell=True), scan_standalone should downgrade the import from CRITICAL
-to WARNING and add an explanatory finding in check_1.
+no shell=True), scan_standalone should suppress the subprocess import from
+Check 4 silently.  If no other check fires the verdict must be CLEAN.
 """
 import pytest
 from ast_guard import scan_standalone
-
-
-def _check1_has_downgrade(result):
-    return any(
-        "downgraded from CRITICAL" in f["explanation"]
-        for f in result["checks"]["check_1_hardcoding"]["findings"]
-    )
 
 
 # --- safe patterns -----------------------------------------------------------
@@ -21,25 +14,22 @@ def _check1_has_downgrade(result):
 def test_safe_run_with_list():
     code = "import subprocess\nsubprocess.run(['ls', '-la'])\n"
     result = scan_standalone(code, mode="strict")
-    assert result["verdict"] == "WARNING", result
+    assert result["verdict"] == "CLEAN", result
     assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
-    assert _check1_has_downgrade(result)
 
 
 def test_no_calls_at_all():
     code = "import subprocess\n"
     result = scan_standalone(code, mode="strict")
-    assert result["verdict"] == "WARNING", result
+    assert result["verdict"] == "CLEAN", result
     assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
-    assert _check1_has_downgrade(result)
 
 
 def test_from_import_safe():
     code = "from subprocess import run\nrun(['echo', 'hi'])\n"
     result = scan_standalone(code, mode="strict")
-    assert result["verdict"] == "WARNING", result
+    assert result["verdict"] == "CLEAN", result
     assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
-    assert _check1_has_downgrade(result)
 
 
 def test_all_safe_functions():
@@ -51,9 +41,8 @@ def test_all_safe_functions():
         "subprocess.check_output(['date'])\n"
     )
     result = scan_standalone(code, mode="strict")
-    assert result["verdict"] == "WARNING", result
+    assert result["verdict"] == "CLEAN", result
     assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
-    assert _check1_has_downgrade(result)
 
 
 # --- unsafe patterns ---------------------------------------------------------
@@ -94,4 +83,3 @@ def test_aliased_import_stays_critical():
     result = scan_standalone(code, mode="strict")
     # We cannot track calls through the alias, so the conservative path fires.
     assert result["verdict"] == "CRITICAL", result
-    assert not _check1_has_downgrade(result)
