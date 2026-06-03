@@ -77,8 +77,11 @@ def print_ansi_report(result: dict) -> None:
     else:
         v_color = GREEN
         
+    confidence = result.get("confidence", 0)
+
     print(f"\n{BOLD}{UNDERLINE}AST-GUARD v{__version__} ANALYSIS REPORT{RESET}")
     print(f"{BOLD}Verdict:{RESET} {v_color}{BOLD}{verdict}{RESET}")
+    print(f"{BOLD}Confidence:{RESET} {confidence}/100")
     print(f"{BOLD}Sensitivity Mode:{RESET} {mode.upper()}")
     print(f"{BOLD}Scan ID:{RESET} {scan_id}")
     print(f"{BOLD}Metrics Fingerprint:{RESET} {fingerprint}")
@@ -129,20 +132,21 @@ def format_json_report(result: dict) -> str:
 def format_sarif_report(result: dict, original_file: str = "original.py", generated_file: str = "generated.py") -> str:
     """
     Formats scan results as SARIF v2.1.0 for GitHub Security Tab and CI/CD integration.
-    
+
     The output follows the SARIF v2.1.0 specification (OASIS standard) and is compatible
     with GitHub's code scanning API (github/codeql-action/upload-sarif).
-    
+
     Args:
         result: The scan result dictionary from ast_guard.scan().
         original_file: Path to the original file (for SARIF artifact reference).
         generated_file: Path to the generated file (findings are reported against this).
-        
+
     Returns:
         A JSON string containing the SARIF report.
-        
+
     Added in v1.2.
     """
+    confidence = result.get("confidence", 0)
     results = []
     checks = result.get("checks", {})
     
@@ -164,6 +168,9 @@ def format_sarif_report(result: dict, original_file: str = "original.py", genera
                 },
                 "partialFingerprints": {
                     "astGuardFingerprint/v1": fingerprint
+                },
+                "properties": {
+                    "confidence": confidence
                 },
                 "locations": [{
                     "physicalLocation": {

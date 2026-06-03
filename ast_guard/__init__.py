@@ -15,6 +15,7 @@ from ast_guard.checks import (
 from ast_guard.config import load_effective_config
 from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback, get_or_create_salt, hash_code_for_scan
 from ast_guard.check_behavioral import risk_score_standalone, is_safe_subprocess
+from ast_guard.confidence import calculate_confidence
 
 def scan(original_code: str, generated_code: str, mode: str = None, config_override: dict = None, telemetry_enabled: bool = True) -> dict:
     """
@@ -66,17 +67,19 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
             "check_4_import_drift": {"status": "CLEAN", "findings": []},
             "check_5_extensional_enumeration": {"status": "CLEAN", "findings": []}
         }
+        confidence = calculate_confidence(check_results, False, effective_mode, syntax_error=True)
         if telemetry_enabled:
             # gen_metrics doesn't exist (parse failed), so pass an empty dict.
             # Logging orig_metrics twice would falsely claim gen == orig.
             _salt = get_or_create_salt()
             _orig_hash = hash_code_for_scan(original_code, _salt)
             _gen_hash = hash_code_for_scan(generated_code, _salt)
-            telemetry_record = log_scan(_orig_hash, _gen_hash, orig_metrics, {}, check_results, [], effective_mode, "CRITICAL")
+            telemetry_record = log_scan(_orig_hash, _gen_hash, orig_metrics, {}, check_results, [], effective_mode, "CRITICAL", confidence)
         else:
             telemetry_record = {}
         return {
             "verdict": "CRITICAL",
+            "confidence": confidence,
             "mode": effective_mode,
             "checks": check_results,
             "transformations": [],
@@ -161,7 +164,12 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
         # strict or audit modes
         verdict = raw_verdict
         
-    # 9. Log Scan Telemetry
+    # 9. Compute confidence score and log telemetry
+    confidence = calculate_confidence(
+        check_results, kombi_triggered, effective_mode,
+        has_transformations=bool(transformations),
+    )
+
     if telemetry_enabled:
         _salt = get_or_create_salt()
         _orig_hash = hash_code_for_scan(original_code, _salt)
@@ -174,13 +182,15 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
             check_results,
             transformations,
             effective_mode,
-            verdict
+            verdict,
+            confidence,
         )
     else:
         telemetry_record = {}
-    
+
     return {
         "verdict": verdict,
+        "confidence": confidence,
         "mode": effective_mode,
         "checks": check_results,
         "transformations": transformations,
@@ -315,6 +325,11 @@ def scan_multilang(
     else:
         verdict = raw_verdict
 
+    confidence = calculate_confidence(
+        check_results, kombi_triggered, effective_mode,
+        has_transformations=bool(transformations),
+    )
+
     telemetry_record: dict = {}
     if telemetry_enabled:
         _salt = get_or_create_salt()
@@ -325,10 +340,12 @@ def scan_multilang(
             orig_metrics, gen_metrics,
             check_results, transformations,
             effective_mode, verdict,
+            confidence,
         )
 
     return {
         "verdict": verdict,
+        "confidence": confidence,
         "mode": effective_mode,
         "checks": check_results,
         "transformations": transformations,
@@ -576,6 +593,11 @@ def scan_standalone(
     else:
         verdict = raw_verdict
 
+    confidence = calculate_confidence(
+        check_results, kombi_triggered, effective_mode,
+        subprocess_safe=_subprocess_import_safe,
+    )
+
     telemetry_record: dict = {}
     if telemetry_enabled:
         _salt = get_or_create_salt()
@@ -584,10 +606,12 @@ def scan_standalone(
         telemetry_record = log_scan(
             _orig_hash, _gen_hash, orig_metrics, gen_metrics,
             check_results, [], effective_mode, verdict,
+            confidence,
         )
 
     return {
         "verdict": verdict,
+        "confidence": confidence,
         "mode": effective_mode,
         "checks": check_results,
         "transformations": [],

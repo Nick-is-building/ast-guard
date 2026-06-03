@@ -58,16 +58,17 @@ def calculate_fingerprint(gen_metrics: dict) -> str:
     data_str = json.dumps({"metrics": metrics_clean}, sort_keys=True)
     return hashlib.sha256(data_str.encode("utf-8")).hexdigest()
 
-def log_scan(orig_hash: str, gen_hash: str, orig_metrics: dict, gen_metrics: dict, check_results: dict, transformations: list, mode: str, verdict: str) -> dict:
+def log_scan(orig_hash: str, gen_hash: str, orig_metrics: dict, gen_metrics: dict, check_results: dict, transformations: list, mode: str, verdict: str, confidence: int = 0) -> dict:
     salt = get_or_create_salt()
     scan_id = calculate_scan_id(orig_hash, gen_hash, salt)
     fingerprint = calculate_fingerprint(gen_metrics)
-    
+
     record = {
         "scan_id": scan_id,
         "metrics_fingerprint": fingerprint,
         "mode": mode,
         "verdict": verdict,
+        "confidence": confidence,
         "orig_metrics": {k: v for k, v in orig_metrics.items() if k not in ("import_list", "call_list")},
         "gen_metrics": {k: v for k, v in gen_metrics.items() if k not in ("import_list", "call_list")},
         "check_results": {k: v["status"] for k, v in check_results.items()},
