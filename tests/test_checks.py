@@ -132,6 +132,43 @@ os.system("ls")
     assert res2["status"] == "CRITICAL"
     assert any("forbidden call 'eval'" in f["explanation"] for f in res2["findings"])
 
+def test_check3_raise_system_exit(default_config):
+    # raise SystemExit(0) terminates the process without importing sys/os.
+    # Without SystemExit in exact_blocked, this would slip through Check 3.
+    orig_code = """
+def compute(n):
+    return n * n
+"""
+    gen_code = """
+def compute(n):
+    result = n * n
+    raise SystemExit(0)
+    return result
+"""
+    orig_metrics = extract_metrics(orig_code)
+    gen_metrics = extract_metrics(gen_code)
+    gen_tree = ast.parse(gen_code)
+
+    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+    assert res["status"] == "CRITICAL"
+    assert any("forbidden call 'SystemExit'" in f["explanation"] for f in res["findings"])
+
+def test_check3_system_exit_in_original_not_flagged(default_config):
+    # If SystemExit was already present in the original, Check 3 (diff-based)
+    # must NOT flag it — only NEW occurrences count.
+    code = """
+def compute(n):
+    if n < 0:
+        raise SystemExit(1)
+    return n * n
+"""
+    orig_metrics = extract_metrics(code)
+    gen_metrics = extract_metrics(code)
+    gen_tree = ast.parse(code)
+
+    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+    assert res["status"] == "CLEAN"
+
 def test_check3_obfuscation_assign(default_config):
     orig_code = "pass"
     gen_code = """

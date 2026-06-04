@@ -194,7 +194,10 @@ def is_blocked_call(call: str, blocklist_imports=None) -> bool:
     """Helper to check if a call name matches forbidden call blocklist patterns."""
     exact_blocked = {
         "exit", "quit", "open", "exec", "eval", "__import__",
-        "compile", "globals", "locals", "vars", "setattr", "delattr", "getattr"
+        "compile", "globals", "locals", "vars", "setattr", "delattr", "getattr",
+        # SystemExit terminates the process without importing sys/os — same
+        # blast radius as sys.exit / os._exit, so treat it as forbidden too.
+        "SystemExit",
     }
     if call in exact_blocked:
         return True
