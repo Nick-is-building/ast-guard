@@ -12,7 +12,7 @@ pytest.importorskip("tree_sitter_bash")
 pytest.importorskip("tree_sitter_javascript")
 
 from ast_guard.multilang import detect_language, extract_metrics_multilang
-from ast_guard import lang_bash, lang_javascript
+from ast_guard import lang_bash, lang_javascript, scan_multilang
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +305,51 @@ class TestDispatcher:
         # contract is that every Python key is present in the others.
         assert py_keys.issubset(bash_keys)
         assert py_keys.issubset(js_keys)
+
+
+# ---------------------------------------------------------------------------
+# scan_multilang error surfacing
+# ---------------------------------------------------------------------------
+
+class TestScanMultilangErrorSurfacing:
+    """Errors from scan_multilang must surface, not be swallowed as CLEAN.
+
+    Regression: before, ``scan_multilang`` wrapped extract_metrics_multilang
+    in ``except Exception`` and returned CLEAN for both unsupported languages
+    and broken inputs, masking real configuration mistakes.
+    """
+
+    def test_unsupported_language_returns_error_verdict(self):
+        r = scan_multilang("a=1", "a=2", language="ruby", telemetry_enabled=False)
+        assert r["verdict"] == "ERROR"
+        finding = r["checks"]["check_3_forbidden_calls"]["findings"][0]
+        assert "Unsupported language" in finding["explanation"]
+        assert "ruby" in finding["explanation"]
+
+    def test_unsupported_language_lists_supported_options(self):
+        r = scan_multilang("a=1", "a=2", language="cobol", telemetry_enabled=False)
+        finding = r["checks"]["check_3_forbidden_calls"]["findings"][0]
+        # Help the caller fix their mistake by naming the supported set.
+        for supported in ("python", "bash", "javascript"):
+            assert supported in finding["explanation"]
+
+    def test_python_syntax_error_in_generated_returns_error(self):
+        r = scan_multilang(
+            "def f():\n    return 1\n",
+            "def f(:\n",  # broken Python syntax
+            language="python",
+            telemetry_enabled=False,
+        )
+        assert r["verdict"] == "ERROR"
+        assert r["checks"]["check_3_forbidden_calls"]["status"] == "CRITICAL"
+
+    def test_happy_path_bash_still_works(self):
+        """Regression check: the supported-language path is unchanged."""
+        r = scan_multilang(
+            "#!/bin/bash\necho hi\n",
+            "#!/bin/bash\necho hi\n",
+            language="bash",
+            telemetry_enabled=False,
+        )
+        assert r["verdict"] == "CLEAN"
+        assert "checks" in r and "telemetry" in r

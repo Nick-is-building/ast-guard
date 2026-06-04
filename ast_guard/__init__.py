@@ -236,7 +236,7 @@ def scan_multilang(
         config.setdefault("settings", {}).setdefault("mode", "strict")
     effective_mode = config["settings"]["mode"]
 
-    # Neutral empty metrics used as fallback when a side fails to parse.
+    # Neutral empty metrics used as fallback when the original side fails to parse.
     _EMPTY_METRICS: dict = {
         "if_count": 0, "guard_clause_count": 0, "loop_depth": 0,
         "mccabe_complexity": 1, "literal_count": 0, "long_string_count": 0,
@@ -246,15 +246,47 @@ def scan_multilang(
         "dangerous_calls": [],
     }
 
+    def _error_result(message: str) -> dict:
+        """Build an ERROR-verdict result dict, shape-compatible with scan()."""
+        err_checks = {
+            "check_1_hardcoding": {"status": "CLEAN", "findings": []},
+            "check_2_complexity_collapse": {"status": "CLEAN", "findings": []},
+            "check_3_forbidden_calls": {
+                "status": "CRITICAL",
+                "findings": [{"severity": "CRITICAL", "line": None, "explanation": message}],
+            },
+            "check_4_import_drift": {"status": "CLEAN", "findings": []},
+            "check_5_extensional_enumeration": {"status": "CLEAN", "findings": []},
+        }
+        return {
+            "verdict": "ERROR",
+            "confidence": calculate_confidence(err_checks, False, effective_mode, syntax_error=True),
+            "mode": effective_mode,
+            "checks": err_checks,
+            "transformations": [],
+            "telemetry": {},
+        }
+
+    # Reject unsupported languages up front so a typo or unsupported value
+    # surfaces as ERROR instead of a misleading CLEAN. Doctrine for the scan
+    # path: only SyntaxError is recoverable; other failures must be visible.
+    if language not in SUPPORTED_LANGUAGES:
+        return _error_result(
+            f"Unsupported language: {language!r}. "
+            f"Supported: {', '.join(SUPPORTED_LANGUAGES)}."
+        )
+
+    # ImportError (missing ast-guard[multilang] extras) intentionally
+    # propagates — the adapters raise it with a helpful install message.
     try:
         orig_metrics = extract_metrics_multilang(original_code, language)
-    except Exception:
+    except SyntaxError:
         orig_metrics = dict(_EMPTY_METRICS)
 
     try:
         gen_metrics = extract_metrics_multilang(generated_code, language)
-    except Exception:
-        gen_metrics = dict(_EMPTY_METRICS)
+    except SyntaxError as e:
+        return _error_result(f"Syntax Error: Generated code failed to parse: {e}")
 
     # Empty Python AST placeholder — Check 1 long-string sub-rule and
     # Check 3 alias-obfuscation sub-rule are Python-AST-only and won't fire.
