@@ -1,5 +1,13 @@
 # CHANGELOG.md - ast-guard
 
+## [2.0.1] - 2026-06-04
+
+### Fixed
+
+- **Check 3 — SystemExit detection gap**: `SystemExit` added to the `exact_blocked` set in `ast_guard/checks.py`, closing the pair-mode/standalone asymmetry where `raise SystemExit(0)` was caught only by Check 6 in standalone mode. The `CAT_09_PROCESS_TERMINATION` benchmark sample for `raise SystemExit(0)` flipped from documented gap to expected CRITICAL.
+- **SARIF output — unresolved Check 6 rule reference**: `check_6_behavioral` is now declared in `_SARIF_RULES` and mapped in `_CHECK_KEY_TO_RULE` (`ast_guard/output.py`). Previously the standalone-mode SARIF report emitted an undeclared `ruleId`, which GitHub Code Scanning rejects. Added a regression test that asserts every emitted `ruleId` resolves to a declared rule.
+- **`scan_multilang` swallowed all exceptions**: replaced the bare `except Exception` around `extract_metrics_multilang` with targeted handling — unsupported-language inputs and generated-code `SyntaxError`s now surface as `ERROR`-verdict results instead of misleading CLEAN; `ImportError` from missing `ast-guard[multilang]` extras propagates with the adapter's install hint; original-code `SyntaxError` falls back to empty metrics, mirroring the `scan()` doctrine.
+
 ## [2.0.0] - 2026-05-31
 
 ### Added
