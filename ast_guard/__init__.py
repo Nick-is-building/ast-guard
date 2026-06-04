@@ -12,6 +12,7 @@ from ast_guard.checks import (
     check_5_extensional_enumeration,
     extract_non_docstring_strings,
     _long_string_findings,
+    is_blocked_call,
 )
 from ast_guard.config import load_effective_config
 from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback, get_or_create_salt, hash_code_for_scan
@@ -272,6 +273,8 @@ def scan_multilang(
     gen_dangerous = set(gen_metrics.get("dangerous_calls", []))
     new_dangerous = gen_dangerous - orig_dangerous
     for call in sorted(new_dangerous):
+        if is_blocked_call(call):
+            continue  # already reported by check_3_forbidden_calls via call_list
         check_3["findings"].append({
             "severity": "CRITICAL",
             "line": None,
