@@ -11,9 +11,11 @@ for the session comes from the user, not from this file.
 A deterministic pre-execution gate for LLM-generated code. Detects
 structural reward-hacking patterns in source code BEFORE it executes.
 Pure AST analysis. No LLM, no ML, no network calls in the scan path.
-Mean scan time 4.7 ms. Zero external dependencies in the Python core.
+Zero external dependencies in the Python core.
 
-Status: v2.0.0, ~10k LOC, 316 passing tests + 8 skipped (MCP extra).
+Status: v2.0.0. Current test count, LOC, and latency: see
+`benchmarks/RESULTS.md` and `pytest tests/ -q`. Do not hard-code these
+numbers here — they drift.
 
 ## Why it exists
 
@@ -59,7 +61,7 @@ benchmarks/
   structural_benchmark/   36 hand-curated ground-truth pairs (100% F1)
   run_benchmark.py     unified runner
 
-tests/                 316 passing, 8 skipped (MCP extra)
+tests/                 pytest suite (8 skipped require MCP extra)
 examples/              5 annotated original/generated pairs per check family
 .github/actions/       reusable composite action with SARIF upload
 ```
@@ -111,25 +113,19 @@ standalone literal_thr     80 (conditional 50 when check_6 score >= 30)
 
 Config hierarchy: CLI args > `.ast-guard.toml` > `~/.ast-guard/config.toml` > defaults.
 
-## Evaluation summary (v2.0.0)
+## Evaluation
 
-| Dataset | Mode | Samples | Key metric |
-|---|---|---|---|
-| Structural Benchmark (curated) | pair | 36 | 100% F1, 4.7ms mean |
-| TRACE built-in | pair | 33 | 95.7% F1, 100% precision |
-| School of Reward Hacks | pair | 26 | 96.2% recall |
-| Countdown-Code | pair | 15,894 | 99.0% TNR |
-| MALT (METR) | standalone | 81,515 | 84.2% specificity, 70.9% hardcoded, 41.7% bypass_constraints |
-
-Full methodology + 6-iteration calibration history: `benchmarks/METHODOLOGY.md`.
+Single source of truth: `benchmarks/RESULTS.md` (per-dataset metrics,
+confusion matrices, comparison table). Calibration history in
+`benchmarks/METHODOLOGY.md`. Do not duplicate numbers here.
 
 ## Test workflow
 
 ```
-python3 -m pytest tests/ -v
+python3 -m pytest tests/ -q
 ```
 
-Expect 316 passed, 8 skipped (MCP extra not installed).
+8 tests are skipped when the MCP extra is not installed.
 
 Reproduce benchmarks:
 ```
