@@ -1,4 +1,4 @@
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __all__ = ["scan", "scan_multilang", "scan_standalone", "feedback"]
 
 import ast
@@ -397,6 +397,7 @@ def scan_standalone(
     mode: str = "strict",
     config: dict = None,
     telemetry_enabled: bool = False,
+    repo_context: list = None,
 ) -> dict:
     """
     Scan a standalone code block with no original/baseline available.
@@ -417,6 +418,29 @@ def scan_standalone(
                  pickle, marshal, code, codeop, importlib). os and sys are normal
                  for agent code on a Linux VM and are suppressed standalone.
       - Check 5: full run (already uses generated code only).
+      - Check 6: behavioral risk scoring, augmented by three baseline-free
+                 structural signals introduced in v2.1.0:
+                 * input-independence dataflow (``ast_guard.dataflow``) —
+                   functions whose returns never depend on parameters,
+                 * intent vs. structure mismatch (``ast_guard.intent``) —
+                   docstring claims (recursive/iterative/sort/DP/compute)
+                   that the AST does not back,
+                 * repo-context outliers (``ast_guard.repo_context``) — when
+                   ``repo_context`` samples are provided, target functions
+                   whose metrics are extreme outliers relative to the
+                   sibling distribution.
+
+    Args:
+        code: Source string to analyze.
+        language: 'python' (default), 'bash', or 'javascript'.
+        mode: Sensitivity mode ('strict', 'standard', 'audit').
+        config: Optional config override dict.
+        telemetry_enabled: Whether to log the scan to the local telemetry.
+        repo_context: Optional list of sibling code strings (typically other
+            files from the same repo or other blocks from the same session).
+            When supplied, a statistical baseline is computed and used to
+            flag outlier functions. A baseline requires at least 5 valid
+            function samples; smaller inputs are silently ignored.
 
     Returns the same result dict shape as scan().
     """
@@ -505,9 +529,21 @@ def scan_standalone(
             _long_string_findings(extract_non_docstring_strings(gen_tree), gen_tree, long_string_len)
         )
 
+    # Optional repo-context baseline. Computed once here so risk_score_standalone
+    # receives an already-built baseline dict — keeps the check function pure
+    # (no IO, no parsing of caller-supplied samples). compute_repo_baseline
+    # returns None when fewer than 5 valid function samples are present;
+    # in that case the outlier branch in risk_score_standalone is a no-op.
+    _repo_baseline = None
+    if repo_context:
+        from ast_guard.repo_context import compute_repo_baseline
+        _repo_baseline = compute_repo_baseline(repo_context)
+
     # Check 6 runs before the literal threshold decision so a co-occurring
     # behavioral signal can lower the threshold from 80 to 50.
-    _c6_result_raw = risk_score_standalone(code, gen_tree, gen_metrics, language)
+    _c6_result_raw = risk_score_standalone(
+        code, gen_tree, gen_metrics, language, repo_baseline=_repo_baseline,
+    )
 
     lit_gen = gen_metrics.get("literal_count", 0)
     _lit_threshold = 50 if _c6_result_raw["score"] >= 30 else 80

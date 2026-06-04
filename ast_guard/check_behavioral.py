@@ -407,9 +407,20 @@ def risk_score_standalone(
     tree: ast.Module,
     metrics: dict,
     language: str,
+    repo_baseline: Optional[dict] = None,
 ) -> dict:
     """
     Score a standalone code block for behavioral risk patterns.
+
+    Args:
+        code: Raw source string (used only for non-Python paths today).
+        tree: Parsed Python AST. For non-Python languages, pass an empty tree.
+        metrics: Metric dict from the language adapter or analyzer.
+        language: 'python', 'bash', or 'javascript'.
+        repo_baseline: Optional statistical baseline from
+            ``ast_guard.repo_context.compute_repo_baseline``. When provided,
+            functions whose metrics are extreme outliers relative to this
+            baseline contribute additional ``repo_outlier_*`` findings.
 
     Returns:
         {
@@ -916,6 +927,45 @@ def risk_score_standalone(
             if fname == "print" and call.args and _is_direct_file_read(call.args[0]):
                 add("answer_extraction", 90, getattr(node, "lineno", None),
                     "open().read() passed directly to print() — possible answer extraction.")
+
+    # -----------------------------------------------------------------------
+    # STRUCTURAL SIGNALS — (a) input-independence (CFG/DFG)
+    # -----------------------------------------------------------------------
+    # Hardcoded solutions share a defining structural property: returned
+    # values do not depend on the function's inputs. Pair mode catches this
+    # via the diff against the baseline; standalone mode previously had no
+    # equivalent signal. analyze_input_independence emits one finding per
+    # function whose returns are >= 80% input-independent.
+    # Imported lazily to mirror the existing taint-import pattern.
+    from ast_guard.dataflow import analyze_input_independence
+
+    for f in analyze_input_independence(tree):
+        add("input_independent_returns", f["score"], f["line"], f["explanation"])
+
+    # -----------------------------------------------------------------------
+    # STRUCTURAL SIGNALS — (b) intent / docstring mismatch
+    # -----------------------------------------------------------------------
+    # A function whose docstring claims one algorithm class (recursive,
+    # iterative, sort, DP, compute) but whose body lacks the matching
+    # structural feature is highly suspect. Local, deterministic, no LLM.
+    from ast_guard.intent import analyze_intent
+
+    for f in analyze_intent(tree):
+        pattern_id = f"intent_mismatch_{f['tag'].removeprefix('no_')}"
+        add(pattern_id, f["score"], f["line"], f["explanation"])
+
+    # -----------------------------------------------------------------------
+    # STRUCTURAL SIGNALS — (c) repo-context outliers (optional)
+    # -----------------------------------------------------------------------
+    # When a statistical baseline of sibling functions is supplied, flag
+    # functions whose metrics are extreme outliers relative to that
+    # distribution. Off when no baseline is provided.
+    if repo_baseline is not None:
+        from ast_guard.repo_context import flag_outliers
+
+        for f in flag_outliers(tree, repo_baseline):
+            pattern_id = f"repo_outlier_{f['metric']}"
+            add(pattern_id, f["score"], f["line"], f["explanation"])
 
     severity = _severity_from_score(total_score, findings)
     return {"score": total_score, "severity": severity, "findings": findings}

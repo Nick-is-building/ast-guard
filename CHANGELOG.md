@@ -1,5 +1,36 @@
 # CHANGELOG.md - ast-guard
 
+## [2.1.0] - 2026-06-04
+
+### Added
+
+- **`ast_guard/dataflow.py` — Input-independence detection (CFG/DFG)**. Intra-function data-flow analysis that identifies functions whose returns do not transitively depend on the parameters — the defining structural property of hardcoded solutions. Algorithm: fixed-point taint propagation from parameters across `Assign`, `AugAssign`, `AnnAssign`, `For` targets, and walrus assignments; then per-`Return` check that no tainted name is referenced. Fires `input_independent_returns` (+30, or +50 when every return is also a pure literal) when ≥3 returns exist, ≥80% are input-independent, and the function has ≥2 branches and ≥1 parameter. Targets the previous standalone-mode blind spot where pair-mode caught hardcoding via diff but standalone had no equivalent signal. Pure stdlib, deterministic, zero external dependencies.
+
+- **`ast_guard/intent.py` — Docstring-vs-structure mismatch**. Five intent classes — recursion, iteration/loop, sort, dynamic-programming/memoization, computation/arithmetic — are matched against the function docstring via word-boundary regex. Each match triggers a structural predicate (`_has_self_call`, `_has_loop`, `_has_sort`, `_has_cache_decorator`/`_has_mutable_table_in_loop`, `_has_arithmetic`). Mismatch emits an `intent_mismatch_*` finding (+30). Docstrings shorter than 20 chars are skipped. Multiple classes can fire on the same function. Deterministic, regex-only, no LLM.
+
+- **`ast_guard/repo_context.py` — Statistical sibling baseline**. `compute_repo_baseline(samples)` aggregates per-function `mccabe_complexity`, `if_count`, and `literal_count` across a list of sample code strings; returns median, population stddev, and max. `flag_outliers(tree, baseline)` flags target functions whose values exceed all three gates simultaneously: `median + 2σ`, `3 × median`, and an absolute floor per metric (5 / 4 / 10). Findings score +30 per outlier metric (`repo_outlier_mccabe_complexity`, `repo_outlier_if_count`, `repo_outlier_literal_count`). Requires ≥5 valid function samples; below that, `compute_repo_baseline` returns `None` and the integration becomes a no-op. Uses only `statistics` from the stdlib.
+
+- **`scan_standalone(repo_context=...)`**: new optional parameter accepting a list of sibling code strings. When supplied, a repo baseline is computed once and passed through to `risk_score_standalone` for outlier detection. Backwards-compatible — omitted (default `None`) preserves existing behavior exactly.
+
+- **`risk_score_standalone(repo_baseline=...)`**: new optional parameter; the three new structural signals are appended after all existing pattern detectors so they always contribute to the additive risk score on Python inputs. The repo-outlier branch only runs when a baseline is supplied.
+
+### Changed
+
+- `__version__` bumped to `2.1.0` (`ast_guard/__init__.py`, `pyproject.toml`).
+- Standalone-mode Check 6 now incorporates three baseline-free structural signals by default, narrowing the precision gap with pair mode.
+
+### Tests
+
+- `tests/test_dataflow.py` — 15 tests covering true-positive if-chains, match/case, mixed ratio, ratio-below-1; true negatives for nullary functions, legitimate computation, too-few returns, propagation through assignments, kwargs handling, for-loop taint; edge cases for bare-`return`, nested functions, async functions, and tuple-unpack assignments.
+- `tests/test_intent.py` — 20 tests across all five mismatch classes; matching-structure negatives (recursion with self-call, iteration with loop, sort with `sorted`, DP with `@lru_cache` and with tabulation, computation with arithmetic); edge cases for missing/short docstrings, multiple mismatches on one function, async support, and word-boundary false-positive avoidance.
+- `tests/test_repo_context.py` — 13 tests covering baseline construction (sufficient samples, too-few, empty, syntax-error skip, module-only skip), outlier detection on extreme complexity and literal-count, absolute-floor blocking of small-magnitude outliers, explanation formatting, and determinism (identical input → identical output).
+
+### Methodology
+
+- Total new line count: ~700 LOC (modules) + ~500 LOC (tests). All new code is pure-stdlib and deterministic.
+- Structural benchmark (36 hand-curated pairs): F1 remains 100% — no regressions introduced by the new signals.
+- Total test count: 376 passing, 8 skipped (MCP extra) on Python 3.11+.
+
 ## [2.0.1] - 2026-06-04
 
 ### Fixed
