@@ -10,14 +10,14 @@
 
 ## What ast-guard Is
 
-ast-guard sits between code generation and execution. It analyzes the AST of LLM-generated code and makes a deterministic verdict before any line runs. It is not a linter, not a security scanner, and not a sandbox — it is a structural integrity check that operates where structural truth cannot be faked.
+ast-guard sits between code generation and execution. It parses LLM-generated code into an AST and returns a deterministic verdict before any line runs. It is not a linter, not a security scanner, and not a sandbox — it is a deterministic structural check that cannot be talked into compliance and is not deceivable by a model's reasoning trace.
 
 Two existing defense classes leave a gap:
 
 - **Training-time alignment** (Anthropic, DeepMind) reduces incidence, not residual.
 - **Inference-time LLM reviewers** (TRACE, RewardHackWatch, EvilGenie) share failure modes with the generator they monitor.
 
-ast-guard is the deterministic third layer. It does not replace LLM-based reviewers — it handles the structural layer so they can focus entirely on semantics.
+ast-guard is built as a deterministic third layer alongside those defenses. Today it reliably catches the structurally obvious bypasses at zero per-scan cost (see [Key Results](#key-results)); the active development direction is to broaden structural coverage over time, so semantic reviewers can concentrate on what only they can do — judging intent and meaning.
 
 ```
 LLM generates code
@@ -75,7 +75,7 @@ ast-guard parses code into an Abstract Syntax Tree and evaluates structural prop
 
 1. **Hardcoding Detection** — if-counts, literal counts, long-string growth vs. baseline. Guard-clauses excluded.
 2. **Complexity Collapse** — per-function McCabe complexity drop >60% without a recognized legitimate optimization.
-3. **Forbidden Calls & Obfuscation** — diff-based detection of new `eval`/`exec`/`subprocess`/`ctypes` calls, alias resolution, `chr()`-obfuscation, builtins subscript.
+3. **Forbidden Calls & Obfuscation** — diff-based detection of new `eval`/`exec`/`subprocess`/`ctypes`/`SystemExit` calls, alias resolution, `chr()`-obfuscation, builtins subscript.
 4. **Import Drift** — new imports against blocklist (CRITICAL) and safelist (CLEAN). Unknown imports → WARNING.
 5. **Extensional Enumeration** — the RLVR shortcut documented by Helff et al.: flat if/elif or match/case chains covering ≥70% of branches with no loops.
 6. **Behavioral Risk Scoring** (standalone only) — additive YARA/Semgrep-style score from AST patterns. CLEAN <30, WARNING 30–69, CRITICAL ≥70.
