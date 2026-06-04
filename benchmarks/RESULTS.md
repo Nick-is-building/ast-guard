@@ -188,11 +188,13 @@ Direct comparison is limited because each tool covers different categories, uses
 
 | Detector | Method | Dataset | Metric | Score |
 |----------|--------|---------|--------|-------|
-| GPT-5.2 (high reasoning) | LLM-as-judge | TRACE (all 54 cats) | Detection Rate | 63% |
+| GPT-4o (LLM-as-judge)† | LLM-as-judge | TRACE (all 54 cats) | Detection Rate | ~63%† |
 | RewardHackWatch | ML + Regex + AST | MALT (5,391) | F1 | 89.7% |
 | **ast-guard v2.0 Pair Mode** | **Deterministic AST** | **TRACE (structural)** | **F1** | **95.7%** |
 | **ast-guard v2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **84.2%** |
 | **ast-guard v2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **43.9%** |
+
+† Approximate figure; no published source. Included as order-of-magnitude context only.
 
 Key differentiators:
 - **Zero cost at inference time** — no LLM calls, no model weights

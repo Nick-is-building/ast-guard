@@ -74,7 +74,7 @@ These approaches are complementary, not competing. ast-guard handles structural 
 
 | Approach | Method | Cost/scan | Latency | Deterministic | Scope |
 |----------|--------|-----------|---------|---------------|-------|
-| GPT-5.2 reviewer | LLM-as-judge | $0.01–0.10 | 500–2000ms | No | Semantic + Structural |
+| GPT-4o reviewer | LLM-as-judge | $0.01–0.10 | 500–2000ms | No | Semantic + Structural |
 | RewardHackWatch | ML + Regex + AST | GPU required | varies | No | Trajectory-level |
 | **ast-guard v2.0** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
 

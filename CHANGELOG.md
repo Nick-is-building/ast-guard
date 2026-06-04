@@ -1,31 +1,5 @@
 # CHANGELOG.md - ast-guard
 
-## [Unreleased]
-
-### Added
-- Confidence score (0-100) in scan results, SARIF output, and telemetry for triage and Precision@k workflows
-- Intra-file taint tracking: cross-function returns, class attributes, setattr, globals(), and closure bypass detection
-- Destructive OS/shutil call detection in Check 6: os.system/os.popen (+70), os.remove/shutil.rmtree (+50) with context-aware safe-target exclusions
-- `__import__()` added to standalone Check 3 forbidden call filter
-
-### Changed
-- Telemetry: code is hashed at API boundary; log_scan no longer receives plaintext
-- Standalone: subprocess import with all-safe calls is now silent (CLEAN) instead of WARNING
-- Standalone: literal threshold raised from 50 to 80, with conditional drop to 50 when check_6 score >= 30
-- Standalone: destructive filesystem calls on relative paths or /tmp targets score +0 (safe context)
-- Check 6: filename resolution now handles os.path.join, pathlib.Path, and f-strings
-
-### Fixed
-- Telemetry: deterministic fingerprint for dict-valued metrics (function_complexities)
-- Output/CLI: replaced hardcoded "v1.3" strings with dynamic __version__
-- Check 3: deduplicated alias findings in fixpoint loop
-- Conditional literal threshold: tightened from check_6 score > 0 to >= 30 to prevent file_write_unknown_target triggering low threshold
-
-### Performance
-- Analyzer: single-pass lineno index replaces per-finding AST walks
-
----
-
 ## [2.0.0] - 2026-05-31
 
 ### Added
@@ -34,7 +8,7 @@
 
 - **`scan_standalone()` in `__init__.py`**: Public API for single-code-block scanning without a baseline. Integrates Check 6; Check 2 is inactive (no baseline). Adds standalone-specific literal threshold (default 50) and extended safe-import list for ML/data-science libraries.
 
-- **Standalone mode calibration**: Raised Check 1 literal threshold for standalone to 50 (pair-mode default is lower), removed `os` and `sys` from CRITICAL imports in standalone mode, expanded safe-import list to ~100 common ML/data-science libraries, added context-aware `exit()` differentiation (only fires process\_termination outside `if __name__ == '__main__'` guards).
+- **Standalone mode calibration**: Raised Check 1 literal threshold for standalone to 80 (conditional 50 when check_6 score >= 30; pair-mode default is lower), removed `os` and `sys` from CRITICAL imports in standalone mode, expanded safe-import list to ~100 common ML/data-science libraries, added context-aware `exit()` differentiation (only fires process\_termination outside `if __name__ == '__main__'` guards).
 
 - **MALT benchmark loader** (`benchmarks/loaders/malt_loader.py`): Streaming ingestion of METR MALT dataset from HuggingFace (`metr-evals/malt-public`). Extracts 140,726 code blocks from 7,179 agent transcripts; filters to 81,515 scannable blocks (>50 chars, parseable). Per-label aggregation across 10 MALT categories.
 
@@ -45,6 +19,10 @@
 - **Multi-level aliasing in Check 3** (v1.3.1): Chained aliases (`b = __builtins__; e = b['eval']; e(...)`), tuple-unpack aliases, and dict-dispatch patterns are now tracked. `chr()` obfuscation via aliased chr and `builtins["chr"]` detected. `resolve_call_name` bare-attribute collision fixed (no longer conflates `obj.method()` with `method()`).
 
 - **Scientific evaluation documentation**: `benchmarks/RESULTS.md` (publication-quality results across 5 datasets), `benchmarks/METHODOLOGY.md` (full optimization history, data pipeline, false positive analysis), `benchmarks/data/malt_summary.json` (machine-readable MALT results), `benchmarks/data/iteration_log.json` (6-iteration standalone calibration log).
+- **Confidence score** (`ast_guard/confidence.py`): 0-100 confidence score exposed in scan results, SARIF output, and telemetry for triage and Precision@k workflows.
+- **Intra-file taint tracking** (`ast_guard/taint.py`): Cross-function returns, class attributes, setattr, globals(), and closure bypass detection.
+- **Destructive OS/shutil call detection in Check 6**: os.system/os.popen score +70, os.remove/shutil.rmtree score +50, with context-aware safe-target exclusions (relative paths and /tmp targets score +0).
+- **`__import__()` detection in standalone Check 3**: Added to the forbidden-call filter alongside eval, exec, and builtins access patterns.
 
 ### Changed
 
@@ -52,6 +30,19 @@
 - `__all__` in `__init__.py` updated to include `scan_standalone` and `scan_multilang`.
 - Check 4 standalone mode no longer fires CRITICAL on `os` and `sys` — both are ubiquitous in legitimate agent code and carry no incremental reward-hacking signal without a baseline.
 - MALT evaluation: 16.6% flag rate on 81,515 samples; 84.2% true-negative rate on normal-labeled code; 70.9% detection on hardcoded\_solution, 41.7% on bypass\_constraints.
+- Telemetry: code is hashed at the API boundary; `log_scan` no longer receives plaintext code.
+- Standalone: `subprocess` import with exclusively safe calls is now CLEAN instead of WARNING.
+- Standalone: destructive filesystem calls on relative paths or `/tmp` targets score +0 (safe context).
+- Check 6: filename resolution now handles `os.path.join`, `pathlib.Path`, and f-strings.
+
+### Fixed
+- Telemetry: deterministic fingerprint for dict-valued metrics (`function_complexities`).
+- Output/CLI: replaced hardcoded `"v1.3"` strings with dynamic `__version__`.
+- Check 3: deduplicated alias findings in fixpoint loop.
+- Conditional literal threshold: tightened from check_6 score > 0 to >= 30 to prevent `file_write_unknown_target` triggering the reduced threshold.
+
+### Performance
+- Analyzer: single-pass lineno index replaces per-finding AST walks.
 
 ### Benchmark Results Summary
 
