@@ -8,7 +8,7 @@ from ast_guard.checks import check_2_complexity_collapse, check_3_forbidden_call
 from ast_guard.allowlist import detect_allowlist_transformations
 from ast_guard.output import format_sarif_report
 from ast_guard.config import load_effective_config
-from ast_guard import scan
+from ast_guard import scan, scan_standalone
 
 @pytest.fixture
 def default_config():
@@ -203,7 +203,7 @@ def test_sarif_output_structure():
     assert sarif["runs"][0]["tool"]["driver"]["name"] == "ast-guard"
     from ast_guard import __version__
     assert sarif["runs"][0]["tool"]["driver"]["version"] == __version__
-    assert len(sarif["runs"][0]["tool"]["driver"]["rules"]) == 5
+    assert len(sarif["runs"][0]["tool"]["driver"]["rules"]) == 6
 
     # partialFingerprints must be present on every result and stable across runs
     # (independent of line numbers, which shift between commits).
@@ -242,5 +242,27 @@ def test_sarif_clean_scan_empty_results():
     result = scan(orig, gen, mode="strict", telemetry_enabled=False)
     sarif_str = format_sarif_report(result)
     sarif = json.loads(sarif_str)
-    
+
     assert len(sarif["runs"][0]["results"]) == 0
+
+
+def test_sarif_standalone_rule_ids_are_declared():
+    """Every ruleId referenced in SARIF results must resolve to a declared rule.
+
+    Regression for v2.0.x: standalone scans emit check_6_behavioral findings
+    whose ruleId previously fell through the _CHECK_KEY_TO_RULE map and ended
+    up as the raw check key. GitHub Code Scanning rejects unresolved rule
+    references.
+    """
+    code = "import sys\ndef f():\n    return sys._getframe(1)\n"
+    result = scan_standalone(code, mode="strict", telemetry_enabled=False)
+    sarif = json.loads(format_sarif_report(result))
+
+    declared = {r["id"] for r in sarif["runs"][0]["tool"]["driver"]["rules"]}
+    referenced = {r["ruleId"] for r in sarif["runs"][0]["results"]}
+
+    assert referenced, "Expected at least one Check 6 finding in this fixture"
+    assert referenced.issubset(declared), (
+        f"Undeclared ruleIds in SARIF output: {referenced - declared}"
+    )
+    assert "ast-guard/check-6-behavioral" in referenced

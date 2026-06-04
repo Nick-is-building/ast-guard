@@ -48,6 +48,12 @@ _SARIF_RULES = [
         "name": "ExtensionalEnumeration",
         "shortDescription": {"text": "Detects enumeration of constant input/output pairs replacing algorithmic logic"},
         "helpUri": "https://github.com/Nick-is-building/ast-guard#check-5--extensional-enumeration"
+    },
+    {
+        "id": "ast-guard/check-6-behavioral",
+        "name": "BehavioralRiskScoring",
+        "shortDescription": {"text": "Detects behavioral reward-hacking patterns via additive risk scoring (standalone mode)"},
+        "helpUri": "https://github.com/Nick-is-building/ast-guard#check-6--behavioral-risk-scoring"
     }
 ]
 
@@ -57,7 +63,8 @@ _CHECK_KEY_TO_RULE = {
     "check_2_complexity_collapse": "ast-guard/check-2-complexity-collapse",
     "check_3_forbidden_calls": "ast-guard/check-3-forbidden-calls",
     "check_4_import_drift": "ast-guard/check-4-import-drift",
-    "check_5_extensional_enumeration": "ast-guard/check-5-extensional-enumeration"
+    "check_5_extensional_enumeration": "ast-guard/check-5-extensional-enumeration",
+    "check_6_behavioral": "ast-guard/check-6-behavioral"
 }
 
 
