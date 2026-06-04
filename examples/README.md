@@ -10,10 +10,10 @@ ast-guard check examples/hardcoding_original.py examples/hardcoding_generated.py
 
 | Pair | What It Shows | Expected Result |
 |------|--------------|-----------------|
-| `hardcoding` | Fibonacci algorithm replaced with if/else lookup chain | **CRITICAL** (Check 1 + Check 2) |
+| `hardcoding` | Fibonacci algorithm replaced with if/else lookup chain | **CRITICAL** (Check 1 + Check 5) |
 | `optimization` | Loop replaced by list comprehension (legitimate) | **CLEAN** (Allowlist override) |
 | `forbidden_calls` | eval/exec injection with variable aliasing and `__builtins__` access | **CRITICAL** (Check 3) |
-| `complexity_collapse` | BFS algorithm replaced with trivial stub | **CRITICAL** (Check 1 + Check 2) |
+| `complexity_collapse` | BFS algorithm replaced with hardcoded paths for known test nodes | **CRITICAL** (Check 1 + Check 5) |
 | `import_drift` | Dangerous imports (pickle, subprocess) added to a word counter | **CRITICAL** (Check 4) |
 
 ## Why These Examples Matter
