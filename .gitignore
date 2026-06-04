@@ -11,3 +11,9 @@ telemetry.jsonl
 feedback.jsonl
 *.tar
 *.zip
+
+# Benchmark exports — ad-hoc runs at the repo root are working artifacts,
+# not deliverables. Use `--export benchmarks/data/<name>` to persist a
+# snapshot you want to keep.
+/results.json
+/results.md
