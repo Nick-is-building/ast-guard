@@ -270,7 +270,15 @@ def is_safe_subprocess(
     call_node: ast.Call,
     from_subprocess_names: frozenset = frozenset(),
 ) -> bool:
-    """True for subprocess.run/call with a literal list arg and no shell=True.
+    """True for subprocess.run/call invocations that cannot be a shell injection.
+
+    Structural-safety property: argv-form (List or Tuple) and no `shell=True`.
+    With shell=False (the default) and an argv-style positional, the executable
+    and its arguments are passed straight to execve — no shell interpretation
+    happens, so element types (Constant, Name, Call, …) do not matter.
+
+    String positionals and variable args remain unsafe (they could be `shell=True`
+    by intent or interpretation), as does any call with `shell=True`.
 
     from_subprocess_names: bare names imported via 'from subprocess import ...'
     so 'run(["ls"])' after 'from subprocess import run' is also recognized.
@@ -286,12 +294,7 @@ def is_safe_subprocess(
             return False
     if not call_node.args:
         return False
-    if not isinstance(call_node.args[0], ast.List):
-        return False
-    if not all(
-        isinstance(e, ast.Constant) and isinstance(e.value, str)
-        for e in call_node.args[0].elts
-    ):
+    if not isinstance(call_node.args[0], (ast.List, ast.Tuple)):
         return False
     for kw in call_node.keywords:
         if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value:

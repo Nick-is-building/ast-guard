@@ -45,6 +45,57 @@ def test_all_safe_functions():
     assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
 
 
+def test_list_with_attribute_element_is_safe():
+    # subprocess.run([sys.executable, ...]) — argv form is shell-injection-safe
+    # regardless of element type.
+    code = (
+        "import sys\nimport subprocess\n"
+        "subprocess.run([sys.executable, '/home/agent/score.py'])\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
+
+
+def test_list_with_name_element_is_safe():
+    code = (
+        "import subprocess\n"
+        "path = '/home/agent/data.csv'\n"
+        "subprocess.run(['cat', path])\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
+
+
+def test_list_with_call_element_is_safe():
+    code = (
+        "import subprocess\n"
+        "subprocess.run([str(1), 'arg'])\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
+
+
+def test_list_with_fstring_element_is_safe():
+    code = (
+        "import subprocess\n"
+        "x = 'hi'\n"
+        "subprocess.run(['echo', f'msg={x}'])\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
+
+
+def test_tuple_arg_is_safe():
+    code = "import subprocess\nsubprocess.run(('ls', '-la'))\n"
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert result["checks"]["check_4_import_drift"]["status"] != "CRITICAL"
+
+
 # --- unsafe patterns ---------------------------------------------------------
 
 def test_shell_true_is_critical():
