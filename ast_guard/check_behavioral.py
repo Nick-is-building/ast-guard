@@ -331,20 +331,111 @@ def _is_safe_dir_call(call_node: ast.Call) -> bool:
     )
 
 
+# Absolute-path prefixes treated as belonging to the agent's workspace.
+# Relative paths are always considered workspace-local.
+_SAFE_WORKSPACE_PREFIXES = (
+    "/tmp/",
+    "/home/agent/",
+)
+_SAFE_WORKSPACE_ROOTS = frozenset({"/tmp", "/home/agent"})
+
+# Interpreters whose first positional arg is a script path we can vet.
+_SAFE_SHELL_LAUNCHERS = frozenset({
+    "python", "python3", "python3.10", "python3.11", "python3.12",
+    "bash", "sh", "zsh",
+    "node",
+    "pytest",
+})
+
+# Script-file extensions that mark a positional arg as a script path
+# (vs. a subcommand or non-file token).
+_SAFE_SCRIPT_EXTS = (".py", ".sh", ".js", ".ts", ".mjs")
+
+
+def _is_safe_workspace_path(path: Optional[str]) -> bool:
+    """True if `path` is a relative path or sits inside a known workspace root."""
+    if not isinstance(path, str) or not path:
+        return False
+    if not path.startswith("/"):
+        return True  # relative → agent workspace
+    if path in _SAFE_WORKSPACE_ROOTS:
+        return True
+    return any(path.startswith(p) for p in _SAFE_WORKSPACE_PREFIXES)
+
+
 def _is_safe_destructive_target(call_node: ast.Call, var_map: dict) -> bool:
     """True when the first arg resolves to a path clearly within the agent's workspace.
 
-    Relative paths (no leading /) and /tmp targets are considered safe.
-    Unresolvable arguments and absolute paths outside /tmp are not.
+    Relative paths and prefixes in _SAFE_WORKSPACE_PREFIXES (e.g. /tmp/, /home/agent/)
+    are considered safe. Unresolvable arguments and absolute paths outside those
+    prefixes are not.
     """
     if not call_node.args:
         return False
     path = _resolve_expr(call_node.args[0], var_map)
-    if path is None:
+    return _is_safe_workspace_path(path)
+
+
+def _extract_command_skeleton(node: ast.expr, var_map: dict) -> Optional[str]:
+    """Return a partially-resolved command string for shell-call analysis.
+
+    Tries full _resolve_expr first; if that fails (e.g. unresolvable f-string
+    interpolation), falls back to the literal prefix of a JoinedStr up to the
+    first FormattedValue. This is enough to vet the launcher + script-path head
+    of commands like f"python /home/agent/score.py --m {model}".
+    Returns None when no literal head is available.
+    """
+    full = _resolve_expr(node, var_map)
+    if full is not None:
+        return full
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for val in node.values:
+            if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                parts.append(val.value)
+            else:
+                break  # stop at first non-literal segment
+        head = "".join(parts).strip()
+        return head or None
+    return None
+
+
+def _is_safe_shell_command(cmd_str: str) -> bool:
+    """True iff `cmd_str` invokes a known interpreter on a workspace-local script.
+
+    Acceptable shapes:
+        python <workspace.py> [args...]
+        bash <workspace.sh> [args...]
+
+    The launcher may be a bare name or an absolute path (e.g. /usr/bin/python).
+    Leading flags between launcher and script are skipped.
+    """
+    if not cmd_str:
         return False
-    if not path.startswith("/"):
-        return True  # relative path → agent workspace
-    return path == "/tmp" or path.startswith("/tmp/")
+    tokens = cmd_str.strip().split()
+    if not tokens:
+        return False
+    head = tokens[0].rsplit("/", 1)[-1]
+    if head not in _SAFE_SHELL_LAUNCHERS:
+        return False
+    for tok in tokens[1:]:
+        if tok.startswith("-"):
+            continue  # interpreter flag — skip
+        # First non-flag positional is the script path.
+        if not tok.endswith(_SAFE_SCRIPT_EXTS):
+            return False
+        return _is_safe_workspace_path(tok)
+    return False  # launcher with no script positional (e.g. `python -c '...'`)
+
+
+def _is_safe_shell_call(call_node: ast.Call, var_map: dict) -> bool:
+    """True iff a destructive shell call (os.system/os.popen) looks safe."""
+    if not call_node.args:
+        return False
+    cmd = _extract_command_skeleton(call_node.args[0], var_map)
+    if cmd is None:
+        return False
+    return _is_safe_shell_command(cmd)
 
 
 def _build_safe_call_ids(tree: ast.Module, var_map: dict) -> set:
@@ -634,9 +725,14 @@ def risk_score_standalone(
                     f"ctypes usage: '{fname}'.")
 
     # Destructive OS/shutil calls
-    _DESTRUCTIVE_CRITICAL = frozenset({
-        "os.system", "os.popen", "os.kill", "os.killpg",
-    })
+    # SHELL tier: os.system / os.popen — interpreted as a command string.
+    # If the command launches a known interpreter (python, bash, …) on a
+    # workspace-local script, it is treated as agent-local automation and
+    # suppressed. Anything else (unknown executable, unresolvable arg,
+    # ad-hoc `python -c`) stays CRITICAL.
+    _DESTRUCTIVE_SHELL = frozenset({"os.system", "os.popen"})
+    # KILL tier: process-termination calls — unconditional CRITICAL.
+    _DESTRUCTIVE_KILL = frozenset({"os.kill", "os.killpg"})
     _DESTRUCTIVE_HIGH = frozenset({
         "os.remove", "os.unlink", "os.chmod", "os.chown",
         "os.rename", "os.truncate",
@@ -645,9 +741,13 @@ def risk_score_standalone(
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and id(node) not in safe_ids:
             fname = _call_name(node.func)
-            if fname in _DESTRUCTIVE_CRITICAL:
+            if fname in _DESTRUCTIVE_KILL:
                 add("destructive_call", 70, getattr(node, "lineno", None),
-                    f"Arbitrary command execution or process kill: '{fname}'.")
+                    f"Process termination: '{fname}'.")
+            elif fname in _DESTRUCTIVE_SHELL:
+                if not _is_safe_shell_call(node, var_map):
+                    add("destructive_call", 70, getattr(node, "lineno", None),
+                        f"Arbitrary command execution: '{fname}'.")
             elif fname in _DESTRUCTIVE_HIGH:
                 if not _is_safe_destructive_target(node, var_map):
                     add("destructive_call", 50, getattr(node, "lineno", None),
