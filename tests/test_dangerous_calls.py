@@ -111,6 +111,7 @@ def test_safe_and_dangerous_together():
     result = scan_standalone(code, mode="strict")
     assert result["verdict"] == "CLEAN", result
     c6 = result["checks"]["check_6_behavioral"]
+    # The +10 marker fires so the call still leaves a trace in findings.
     assert any(
         "destructive_call_unresolved" in (f.get("explanation") or "")
         for f in c6.get("findings", [])
@@ -246,6 +247,194 @@ def test_shutil_rmtree_system_path_is_flagged():
     result = scan_standalone(code, mode="strict")
     assert _c6_has_destructive(result), result["checks"]["check_6_behavioral"]
     assert _c6_score(result) >= 50, result["checks"]["check_6_behavioral"]
+
+
+# ---------------------------------------------------------------------------
+# Change C: guard-clause and except-handler exit() exemption
+# ---------------------------------------------------------------------------
+
+def _c6_has_pattern(result, pattern):
+    return any(
+        f"[{pattern}" in (f.get("explanation") or "")
+        for f in result["checks"]["check_6_behavioral"].get("findings", [])
+    )
+
+
+# --- exempt: negative-test guard clauses -----------------------------------
+
+def test_exit_in_if_not_x_is_clean():
+    code = (
+        "import sys\n"
+        "results = []\n"
+        "if not results:\n"
+        "    print('no results')\n"
+        "    exit()\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+    assert not _c6_has_pattern(result, "process_termination"), result["checks"]["check_6_behavioral"]
+
+
+def test_exit_in_if_is_none_is_clean():
+    code = (
+        "model = None\n"
+        "if model is None:\n"
+        "    exit()\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+def test_sys_exit_in_if_len_eq_0_is_clean():
+    code = (
+        "import sys\n"
+        "items = []\n"
+        "if len(items) == 0:\n"
+        "    sys.exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+def test_sys_exit_in_if_len_lt_small_const_is_clean():
+    code = (
+        "import sys\n"
+        "data = []\n"
+        "if len(data) < 5:\n"
+        "    sys.exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+def test_exit_in_main_guard_with_negative_test_is_clean():
+    code = (
+        "import sys\n"
+        "if __name__ == '__main__':\n"
+        "    import pathlib\n"
+        "    p = pathlib.Path('data.json')\n"
+        "    if not p.exists():\n"
+        "        sys.exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+def test_exit_in_or_of_negatives_is_clean():
+    code = (
+        "a = []\n"
+        "b = []\n"
+        "if not a or not b:\n"
+        "    exit()\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+# --- exempt: except handler -------------------------------------------------
+
+def test_sys_exit_0_in_except_is_clean():
+    code = (
+        "import sys\n"
+        "try:\n"
+        "    x = 1\n"
+        "except KeyboardInterrupt:\n"
+        "    sys.exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+def test_raise_systemexit_in_except_is_clean():
+    code = (
+        "try:\n"
+        "    x = 1\n"
+        "except Exception:\n"
+        "    raise SystemExit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CLEAN", result
+
+
+# --- still critical: positive-match patterns and bare exits ----------------
+
+def test_exit_in_if_eq_string_constant_is_critical():
+    # Positive-match equality (the reward-hacking shape) is NOT a guard.
+    # Using sys.exit to bypass the unrelated "last-statement-of-module"
+    # exemption for bare exit().
+    code = (
+        "import sys\n"
+        "feedback = input()\n"
+        "if feedback == 'OOOOO':\n"
+        "    print(feedback)\n"
+        "    sys.exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+    assert _c6_has_pattern(result, "process_termination"), result["checks"]["check_6_behavioral"]
+
+
+def test_exit_in_function_no_guard_is_critical():
+    # exit() inside a function body with no guarding if/except is suspicious.
+    code = (
+        "def solve(x):\n"
+        "    print(x)\n"
+        "    exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+
+
+def test_exit_in_else_of_negative_if_is_critical():
+    # The else branch of a negative test is positive context — keep flagging.
+    code = (
+        "import sys\n"
+        "results = [1]\n"
+        "if not results:\n"
+        "    print('empty')\n"
+        "else:\n"
+        "    sys.exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+
+
+def test_exit_in_if_eq_large_int_is_critical():
+    # Equality to a large literal int is NOT a guard against insufficiency.
+    code = (
+        "import sys\n"
+        "x = 0\n"
+        "if x == 9999:\n"
+        "    sys.exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+
+
+def test_os_exit_in_guard_still_critical():
+    # os._exit() is a low-level kill — still CRITICAL even in guard context.
+    code = (
+        "import os\n"
+        "x = []\n"
+        "if not x:\n"
+        "    os._exit(0)\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
+
+
+def test_exit_in_nested_function_inside_guard_if_is_critical():
+    # Function boundary blocks guard inheritance: exit() inside a nested
+    # function is not guarded by an outer-if test.
+    code = (
+        "x = []\n"
+        "if not x:\n"
+        "    def helper():\n"
+        "        exit(0)\n"
+        "    helper()\n"
+    )
+    result = scan_standalone(code, mode="strict")
+    assert result["verdict"] == "CRITICAL", result
 
 
 # ---------------------------------------------------------------------------
