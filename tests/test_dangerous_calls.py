@@ -99,19 +99,22 @@ def test_dunder_import_is_critical():
 # ---------------------------------------------------------------------------
 
 def test_safe_and_dangerous_together():
-    # p = os.path.join('/tmp', 'out') is not tracked in var_map (Call, not Constant)
-    # so os.remove(p) is unresolvable → still flagged as destructive (+50).
+    # `p` is bound to a Call (os.path.join) which _build_simple_assignments
+    # does not track in var_map → arg is unresolvable when os.remove(p) is
+    # examined. Unresolvable destructive targets land at +10 (well below
+    # the 30 WARNING threshold), keeping the sample CLEAN.
     code = (
         "import os\n"
         "p = os.path.join('/tmp', 'out')\n"
         "os.remove(p)\n"
     )
     result = scan_standalone(code, mode="strict")
-    assert result["verdict"] in ("WARNING", "CRITICAL"), result
+    assert result["verdict"] == "CLEAN", result
     c6 = result["checks"]["check_6_behavioral"]
-    findings = c6.get("findings", [])
-    desctructive_flagged = any("destructive" in f["explanation"].lower() or "os.remove" in f["explanation"] for f in findings)
-    assert desctructive_flagged, findings
+    assert any(
+        "destructive_call_unresolved" in (f.get("explanation") or "")
+        for f in c6.get("findings", [])
+    ), c6
 
 
 # ---------------------------------------------------------------------------
@@ -139,11 +142,21 @@ def test_os_remove_system_path_is_flagged():
     assert _c6_score(result) >= 50, result["checks"]["check_6_behavioral"]
 
 
-def test_os_remove_unresolvable_arg_is_flagged():
+def test_os_remove_unresolvable_arg_is_low():
+    # Unresolvable destructive target: emit a low-severity marker (+10) but
+    # do not flag CRITICAL/WARNING alone. Cross-block agent code routinely
+    # binds path variables to tempfile.* / os.path.join results we can't
+    # statically resolve, and the +50 tier was a dominant FP source on
+    # standalone-mode normal samples.
     code = 'import os\nos.remove(some_var)\n'
     result = scan_standalone(code, mode="strict")
-    assert _c6_has_destructive(result), result["checks"]["check_6_behavioral"]
-    assert _c6_score(result) >= 50, result["checks"]["check_6_behavioral"]
+    assert result["verdict"] == "CLEAN", result
+    c6 = result["checks"]["check_6_behavioral"]
+    assert any(
+        "destructive_call_unresolved" in (f.get("explanation") or "")
+        for f in c6.get("findings", [])
+    ), c6
+    assert _c6_score(result) == 10, c6
 
 
 def test_os_system_unresolved_var_is_critical():

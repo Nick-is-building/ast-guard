@@ -753,9 +753,22 @@ def risk_score_standalone(
                     add("destructive_call", 70, getattr(node, "lineno", None),
                         f"Arbitrary command execution: '{fname}'.")
             elif fname in _DESTRUCTIVE_HIGH:
-                if not _is_safe_destructive_target(node, var_map):
+                # Three-way classification:
+                #   resolved → safe workspace path : no finding
+                #   resolved → unsafe absolute path: +50 destructive_call
+                #   unresolvable arg               : +10 destructive_call_unresolved
+                # Most unresolvable args in agent code are tempfile.mkdtemp() returns
+                # or workspace-internal path variables (cross-block context); flagging
+                # them at +50 floods false positives without detection value.
+                resolved = _resolve_expr(node.args[0], var_map) if node.args else None
+                if _is_safe_workspace_path(resolved):
+                    pass  # clearly safe
+                elif resolved is not None:
                     add("destructive_call", 50, getattr(node, "lineno", None),
                         f"Destructive filesystem operation: '{fname}'.")
+                else:
+                    add("destructive_call_unresolved", 10, getattr(node, "lineno", None),
+                        f"Destructive filesystem operation '{fname}' on unresolvable target.")
 
     # -----------------------------------------------------------------------
     # HIGH RISK (+50)
