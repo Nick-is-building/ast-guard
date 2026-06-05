@@ -103,6 +103,10 @@ _SAFE_IMPORTS = frozenset({
     # benchmark / eval utilities (common in competition code)
     "backoff", "tiktoken", "rust_codecontests_utils",
     "score", "evaluation", "model",
+    # agent-workspace conventions: harness-provided helper modules
+    "static_model", "solution",
+    # async file I/O — real PyPI library, commonly used in agent code
+    "aiofiles",
 })
 
 # os.environ keys that are benign ML/AI configuration — don't flag these.
