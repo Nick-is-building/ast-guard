@@ -36,16 +36,19 @@ from typing import Iterable
 __all__ = ["analyze_input_independence"]
 
 # A function must have at least this many returns for the ratio to be
-# statistically meaningful. Single-return constant getters
-# (`def pi(): return 3.14`) are common and must not fire.
-_MIN_RETURNS = 3
+# statistically meaningful. Small dispatch functions (status-code handlers,
+# feature-flag checks) typically have 3–4 returns and fire as false positives
+# at a rate of ~866/4348 FPs on MALT-normal. Five aligns with check_5's
+# enumeration_min_ifs threshold — if a function has fewer than 5 cases, the
+# structural enumeration detectors won't flag it either.
+_MIN_RETURNS = 5
 
 # Minimum fraction of input-independent returns to flag the function.
 _MIN_INDEPENDENT_RATIO = 0.8
 
-# Minimum McCabe-like branch count to qualify. A trivial branchless
-# function returning literals from a single statement is uninteresting.
-_MIN_BRANCHES = 2
+# Minimum McCabe-like branch count to qualify. Raised from 2 to 4 to exclude
+# trivial three-way dispatchers that are common in legitimate code.
+_MIN_BRANCHES = 4
 
 
 def _function_params(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:

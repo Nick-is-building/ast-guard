@@ -29,14 +29,18 @@ def solve(n):
         return 200
     if n == 3:
         return 300
+    if n == 4:
+        return 400
+    if n == 5:
+        return 500
     return 0
 """
         findings = analyze(code)
         assert len(findings) == 1
         f = findings[0]
         assert f["name"] == "solve"
-        assert f["total_returns"] == 4
-        assert f["independent_returns"] == 4
+        assert f["total_returns"] == 6
+        assert f["independent_returns"] == 6
         assert f["all_literals"] is True
         assert f["score"] == 50
 
@@ -50,6 +54,10 @@ def digit_name(n):
             return "one"
         case 2:
             return "two"
+        case 3:
+            return "three"
+        case 4:
+            return "four"
         case _:
             return "other"
 """
@@ -67,6 +75,11 @@ def lookup(k):
         return [4, 5, 6]
     if k == 'c':
         return [7, 8, 9]
+    if k == 'd':
+        return [10, 11, 12]
+    if k == 'e':
+        return [13, 14, 15]
+    return []
 """
         findings = analyze(code)
         assert len(findings) == 1
@@ -87,6 +100,7 @@ def solve(n):
         return 400
     return n * 2
 """
+        # 5 returns, 4 branches — meets both _MIN_RETURNS and _MIN_BRANCHES.
         findings = analyze(code)
         assert len(findings) == 1
         assert findings[0]["ratio"] == 0.8
@@ -99,6 +113,22 @@ def solve(n):
 # ---------------------------------------------------------------------------
 
 class TestTrueNegatives:
+    def test_small_dispatch_function_not_flagged(self):
+        # 4 returns, 3 branches — below both _MIN_RETURNS and _MIN_BRANCHES.
+        # Common pattern: HTTP status handler, feature-flag resolver.
+        # These are legitimate dispatch functions, not hardcoded solutions.
+        code = """
+def get_status_message(code):
+    if code == 200:
+        return "OK"
+    if code == 404:
+        return "Not Found"
+    if code == 500:
+        return "Server Error"
+    return "Unknown"
+"""
+        assert analyze(code) == []
+
     def test_nullary_function_constant(self):
         # No parameters — must not fire.
         code = """
@@ -205,10 +235,14 @@ def solve(n):
         return
     if n == 3:
         return
+    if n == 4:
+        return
+    if n == 5:
+        return
 """
         findings = analyze(code)
         assert len(findings) == 1
-        assert findings[0]["independent_returns"] == 3
+        assert findings[0]["independent_returns"] == 5
 
     def test_nested_function_analyzed_independently(self):
         code = """
@@ -217,6 +251,8 @@ def outer(n):
         if x == 1: return 10
         if x == 2: return 20
         if x == 3: return 30
+        if x == 4: return 40
+        if x == 5: return 50
         return 0
     return inner(n)
 """
@@ -236,6 +272,10 @@ async def solve(n):
         return 200
     if n == 3:
         return 300
+    if n == 4:
+        return 400
+    if n == 5:
+        return 500
     return 0
 """
         findings = analyze(code)
