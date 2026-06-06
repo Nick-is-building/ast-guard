@@ -131,14 +131,14 @@ class TestModerateRisk:
         assert result["severity"] == "WARNING"
 
     def test_open_write_generic(self):
-        # .bin is not an exempt extension; "config" is not an exempt path keyword
-        code = "open('config.bin', 'w')"
+        # Absolute path outside safe prefixes is suspicious
+        code = "open('/var/config.bin', 'w')"
         result = assert_pattern(code, "file_write", min_score=30)
         assert result["severity"] == "WARNING"
 
     def test_open_append_generic(self):
-        # .bin is not an exempt extension
-        code = "open('mydata.bin', 'a')"
+        # Absolute path outside safe prefixes is suspicious
+        code = "open('/var/mydata.bin', 'a')"
         result = assert_pattern(code, "file_write", min_score=30)
 
     def test_open_write_unknown_target(self):
@@ -156,6 +156,17 @@ class TestModerateRisk:
         assert score("open('data.csv', 'w')")["score"] == 0
         assert score("open('notes.md', 'w')")["score"] == 0
         assert score("open('report.html', 'w')")["score"] == 0
+
+    def test_open_write_relative_path_exempt(self):
+        # Relative paths are agent-workspace writes — exempt like destructive calls.
+        assert score("open('output.bin', 'w')")["score"] == 0
+        assert score("open('data/result.pkl', 'w')")["score"] == 0
+
+    def test_open_write_tmp_path_exempt(self):
+        # /tmp/ is in _SAFE_WORKSPACE_PREFIXES for destructive calls; apply same
+        # rule to writes for consistency — /tmp/ writes are normal agent output.
+        assert score("open('/tmp/result.bin', 'w')")["score"] == 0
+        assert score("open('/tmp/work/data.pkl', 'a')")["score"] == 0
 
     def test_environ_mutation_subscript(self):
         code = "import os\nos.environ['MY_VAR'] = 'x'"

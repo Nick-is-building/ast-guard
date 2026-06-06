@@ -745,6 +745,8 @@ def risk_score_standalone(
                     f"open() write mode on /proc path: {filename!r}.")
             elif filename is not None and _is_expected_output_path(filename):
                 pass  # normal agent output — solution files, data exports, logs
+            elif filename is not None and _is_safe_workspace_path(filename):
+                pass  # relative paths and /tmp/ workspace writes are normal output
             elif filename is not None:
                 add("file_write", 30, line,
                     f"open() write mode ({mode!r}) on: {filename!r}.")
