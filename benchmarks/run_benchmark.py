@@ -6,6 +6,12 @@ Evaluates ast-guard against reward hacking samples organized by the
 TRACE taxonomy (Deshpande et al., 2026) and against external benchmark
 datasets loaded via the Phase 3 ingestion framework.
 
+Note on the built-in TRACE benchmark: the 33 samples run via --benchmark trace
+are hand-written by the project author using TRACE category names as a guide.
+They are NOT drawn from the published TRACE dataset (Deshpande et al. 2026,
+517 trajectories). Use them as regression checks that specific structural
+patterns fire correctly, not as an evaluation on real TRACE data.
+
 Usage:
     python -m benchmarks.run_benchmark
     python -m benchmarks.run_benchmark --json
@@ -587,6 +593,7 @@ def format_cli_report(results, taxonomy):
     lines.append("=" * 70)
     lines.append("  ast-guard Benchmark Report")
     lines.append("  Taxonomy reference: TRACE (Deshpande et al., 2026)")
+    lines.append("  Note: built-in samples are hand-written by the author — not the published TRACE dataset")
     lines.append("=" * 70)
 
     # Detection results

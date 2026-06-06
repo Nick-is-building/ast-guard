@@ -56,7 +56,7 @@ Results on publicly released datasets with labels not authored by this project.
 | Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** | pending re-run ‡ |
 
 † TNR on the `normal` label only (77,369 samples); see [RESULTS.md](benchmarks/RESULTS.md) for the full confusion matrix.  
-‡ Numbers reproduced from an earlier run; no snapshot JSON currently stored in `benchmarks/data/`. Re-run with `python -m benchmarks.run_benchmark --benchmark <name> --json results.json` to re-verify.
+‡ Numbers recorded in CHANGELOG at v2.1.0; no JSON artifact stored in `benchmarks/data/` and not re-verified at v2.2.0. Re-run with `python -m benchmarks.run_benchmark --benchmark <name> --json results.json` to produce a current artifact.
 
 ### Hand-constructed built-in suite (regression / sanity checks, not external benchmarks)
 

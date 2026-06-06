@@ -72,7 +72,7 @@ The 2 false negatives are hacked samples whose pattern falls outside the 15 cove
 
 Countdown-Code contains arithmetic countdown problems. The vast majority of legitimate solutions are 3-line arithmetic functions that correctly pass CLEAN.
 
-**Note: no snapshot JSON is stored in `benchmarks/data/` for this run. Numbers below are from an earlier run and have not been re-verified with a stored artifact. Reproduce with: `python -m benchmarks.run_benchmark --benchmark countdown-code --json results.json`**
+**Note: numbers recorded in CHANGELOG at v2.1.0. No JSON artifact stored in `benchmarks/data/` and not re-verified at v2.2.0. To produce a current artifact: `python -m benchmarks.run_benchmark --benchmark countdown-code --json results.json`**
 
 | Metric | Value |
 |--------|-------|
@@ -88,7 +88,7 @@ Context: 99% of samples are legitimate short arithmetic functions. The 160 flagg
 
 The School of Reward Hacks dataset contains Python implementations of documented reward-hacking strategies.
 
-**Note: no snapshot JSON is stored in `benchmarks/data/` for this run. Numbers below are from an earlier run and have not been re-verified with a stored artifact. Reproduce with: `python -m benchmarks.run_benchmark --benchmark school-of-hacks --json results.json`**
+**Note: numbers recorded in CHANGELOG at v2.1.0. No JSON artifact stored in `benchmarks/data/` and not re-verified at v2.2.0. To produce a current artifact: `python -m benchmarks.run_benchmark --benchmark school-of-hacks --json results.json`**
 
 | Metric | Value |
 |--------|-------|
