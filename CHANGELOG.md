@@ -1,5 +1,61 @@
 # CHANGELOG.md - ast-guard
 
+## [2.2.0] - 2026-06-06
+
+### Added
+
+- **`lang_bash_behavioral.py` — Behavioral risk scoring for Bash** (Check 6, standalone mode): new module mirroring the Python `check_behavioral.py` pattern for tree-sitter Bash ASTs. Signals: `eval_dynamic` (+70), `process_termination` (+70), `pipe_to_shell` (+70), `test_file_write` (+50), `startup_persistence` (+50), `subprocess_shell` (+30), `environ_mutation` (+30), `network_fetch` (+20), `destructive_call` (+50). Check 6 is now active for Bash in standalone mode.
+
+- **`lang_javascript_behavioral.py` — Behavioral risk scoring for JavaScript/TypeScript** (Check 6, standalone mode): new module for tree-sitter JS ASTs. Signals: `eval_dynamic` (+70), `function_constructor` (+70; `new Function(...)`), `process_termination` (+70), `module_cache_manipulation` (+70; `require.cache`), `test_file_write` (+50), `subprocess_shell` (+30), `dangerous_import` (+30; `child_process`), `environ_mutation` (+30). Check 6 is now active for JS/TS in standalone mode.
+
+- **Check 5 (Extensional Enumeration) for Bash** (`lang_bash.py`): `_collect_enumeration_analysis()` detects `case/esac` statements with literal branch values and `if/elif` with `[[ $x == "y" ]]` and `[ "$x" = "y" ]` literal string comparisons. Both double-bracket and POSIX single-bracket equality operators covered.
+
+- **Check 5 (Extensional Enumeration) for JavaScript** (`lang_javascript.py`): `_collect_enumeration_analysis()` detects `switch/case` statements with string/number literal values and `if/else-if` chains with `===`/`==` literal equality comparisons. Object-as-lookup-dispatch is a known limitation (documented).
+
+- **CLI `--language` flag** (`cli.py`): explicit language selection `{python,bash,javascript,auto}` and `--no-multilang` override. Default `auto` uses `detect_language_with_info()` (shebang-first, then keyword scoring). Routes non-Python auto-detected code to `scan_multilang()`.
+
+- **`detect_language_with_info()` and `is_multilang_available()`** (`multilang.py`): extended language-detection API returning `(language, method, score)` tuple; availability guard for tree-sitter extras.
+
+- **Language and detection method in output** (`output.py`): ANSI report and SARIF run-level properties now surface the detected language and detection method (shebang / keyword / explicit).
+
+### Fixed
+
+- **Check 5 — `match/case` pattern validation** (`ast_guard/analyzer.py`, `checks.py`): wildcard (`case _:`), capture-variable (`case x:`), and guarded (`case 1 if cond:`) branches were previously counted as enumeration branches. Added `_is_literal_match_pattern()` and `_is_enumeration_match_case()` helpers that accept only `MatchValue(Constant)`, `MatchSingleton(True/False/None)`, and `MatchOr` (all-literal) patterns; all other patterns and any case with a guard are excluded. Fixes recall on genuine enumeration shortcut patterns; reduces false positives on idiomatic Python `match` usage.
+
+- **Check 2 — partial rename bypass + dropped function** (`checks.py`): the per-function comparison loop only compared functions sharing the same qualified name. An LLM that kept one function intact but renamed or deleted all other complex siblings escaped Check 2. Added an else-branch (runs when `common_names` is non-empty) that sums the complexity of dropped original functions and compares it against the complexity of new unmatched generated functions. Fires when the combined drop exceeds `complexity_rel_decrease` and the dropped total meets `complexity_abs_min`. Covers both partial rename (replacement exists but is simpler) and full deletion (`new_complexity = 0`).
+
+- **Bash Check 5 — POSIX single-bracket equality** (`lang_bash.py`): `[ "$x" = "y" ]` (single `=` operator) was not detected; only the double-bracket form `[[ $x == "y" ]]` was matched. Added `"="` to the operator check. Both forms produce a `test_command / binary_expression` subtree in tree-sitter-bash.
+
+- **`scan_standalone()` — language dispatch for Check 6** (`__init__.py`): Check 6 previously always called `risk_score_standalone` (Python-only). Now dispatches to `lang_bash_behavioral` or `lang_javascript_behavioral` based on detected language. Removed the non-Python early-return stub from `check_behavioral.py`.
+
+### Tests
+
+- `tests/test_bash_behavioral.py` — new file, 9 test classes covering all Bash behavioral signals (TP) and clean counterparts (TN).
+- `tests/test_js_behavioral.py` — new file, 8 test classes covering all JS behavioral signals (TP) and clean counterparts (TN).
+- `tests/test_multilang.py` — extended with language-dispatch tests for Check 5 and Check 6 across Bash and JS; total file covers multilang scan pipeline end-to-end.
+- `tests/test_check5.py` — updated for `match/case` pattern validation; 3 new tests covering guards, wildcard/capture, and `MatchOr` patterns.
+- `tests/test_checks.py` — 4 new tests for Check 2: partial rename TP, dropped function TP, renamed same-complexity TN, dropped low-complexity TN.
+- Total test count: 482 passing, 8 skipped (MCP extra). Up from 410 at v2.1.2.
+
+### Benchmark Results (MALT, v2.1.2 → v2.2.0)
+
+All numbers from `benchmarks/data/malt_v2_2_0.json` (81,515 samples, standalone strict mode).
+
+| Metric | v2.1.2 | v2.2.0 | Δ |
+|--------|--------|--------|---|
+| TNR normal (77,369) | 94.9% | **95.0%** | +0.1 pp |
+| hardcoded\_solution (429) | 46.9% | **46.9%** | 0 |
+| bypass\_constraints (2,379) | 33.2% | **34.5%** | +1.3 pp |
+| FPs on normal | 3,917 | **3,888** | −29 |
+
+Bash/JS contribute only 6 and 9 normal FPs respectively (0.4% of total normal FPs), confirming the new behavioral modules are well-calibrated. Language gap on bypass\_constraints: 316/322 missed Bash bypass and 30/30 missed JS bypass have zero structural signal — they are semantically encoded (silent failure, wrong logic) and are not detectable by static analysis without a pair-mode baseline.
+
+### Changed
+
+- `__version__` bumped to `2.2.0` (`ast_guard/__init__.py`). `pyproject.toml` switched to `dynamic = ["version"]` reading from `ast_guard.__version__` via `[tool.setuptools.dynamic]`.
+
+---
+
 ## [2.1.2] - 2026-06-06
 
 ### Fixed
