@@ -1,5 +1,55 @@
 # CHANGELOG.md - ast-guard
 
+## [2.1.2] - 2026-06-06
+
+### Fixed
+
+- **`dataflow.py` — Raised `input_independent_returns` thresholds** to reduce false positives on legitimate dispatch functions. `_MIN_RETURNS` raised from 3 to 5 and `_MIN_BRANCHES` from 2 to 4, aligning with check_5's `enumeration_min_ifs = 5`. Small status-code handlers, feature-flag resolvers, and similar 3–4 return dispatch functions no longer fire the signal. Hardcoded competitive-programming solutions, which typically enumerate many more cases, remain detectable. Motivated by v2.1.1 FP analysis showing 866 `input_independent_returns` occurrences on MALT-normal (20% of remaining FPs).
+
+- **`checks.py` — Numeric-sequence string filter** (`_is_numeric_sequence_string`): long strings where >50% of characters are digits and <15% are letters (comma- or space-delimited numbers, CSV data, numeric output) no longer trigger the check_1 long-string detector. Complements the existing natural-text and binary-blob filters. Pipe-separated word tables (high letter density) remain unaffected.
+
+- **`check_behavioral.py` — Workspace-path writes exempt from `file_write` scoring**: `open()` calls in write mode targeting relative paths or `/tmp/` prefixes now score 0 instead of +30, applying the same `_is_safe_workspace_path()` rule already in effect for destructive calls. Eliminated all 538 `[file_write +30]` FPs on MALT-normal samples from the v2.1.1 breakdown — all were relative-path agent-workspace writes.
+
+### Benchmark Results (v2.1.2 vs v2.1.1)
+
+| Metric | v2.1.1 | v2.1.2 | Δ |
+|--------|--------|--------|---|
+| TNR normal (77,369) | 94.4% | **94.9%** | +0.5 pp |
+| hardcoded_solution (429) | 50.3% | **46.9%** | −3.4 pp |
+| bypass_constraints (2,379) | 36.1% | **33.2%** | −2.9 pp |
+| FPs on normal | 4,348 | **3,917** | −431 |
+
+Trade-off: 431 FPs eliminated at a cost of 85 TPs (5:1 ratio). TP losses come entirely from the dataflow threshold change — small dispatch functions with 3–4 returns that were previously accidental matches. Tests updated to reflect new spec; 410 passing, 8 skipped (MCP extra).
+
+---
+
+## [2.1.1] - 2026-06-06
+
+### Fixed
+
+- **`check_behavioral.py` — Context-aware subprocess safety**: `_is_safe_subprocess` now accepts any `argv`-form positional argument (list literal, variable, or expression), not just string literals. Reduces CRITICAL verdicts on legitimate subprocess calls where the command is constructed at runtime.
+
+- **`check_behavioral.py` — Shell-argument-aware destructive calls**: `os.system` and `os.popen` calls are now inspected for shell-argument safety. Calls where the argument is a variable or expression that resolves to a safe workspace path score +10 instead of +70.
+
+- **`check_behavioral.py` — Safe import whitelist expanded**: `static_model`, `solution`, and `aiofiles` added to `_SAFE_IMPORTS`. These identifiers generated `unknown_import +10` signals at 376× and 350× respectively on MALT-normal.
+
+- **`check_behavioral.py` — Guard-clause and except-handler exits exempt from `process_termination`**: `sys.exit()` and `exit()` inside except-handlers and guard clauses (short top-level if-blocks) no longer score +70. These are normal error-handling and script-entry patterns.
+
+- **`checks.py` — Natural-text and binary-blob long-string filters**: `_is_natural_text_string()` (letters/n > 0.50 AND spaces/n > 0.05) and `_is_binary_blob_string()` (pure hex or base64 with both digits and letters) skip prose prompt templates and encoded binary data from the check_1 long-string detector. The pipe-separated lookup pattern (TRACE CAT_03) is preserved.
+
+### Benchmark Results (v2.1.0 → v2.1.1)
+
+| Metric | v2.1.0 | v2.1.1 | Δ |
+|--------|--------|--------|---|
+| TNR normal (77,369) | 83.8% | **94.4%** | +10.6 pp |
+| hardcoded_solution (429) | 71.8% | **50.3%** | −21.5 pp |
+| bypass_constraints (2,379) | 42.4% | **36.1%** | −6.3 pp |
+| FPs on normal | ~12,534 | **4,348** | −8,186 |
+
+Large FPR reduction driven by behavioral fixes and the long-string filter. TP losses are from accidental matches (OpenAI prompt templates in `ai_rd_rust_codecontests_inference/main` family; import whitelist removing signals on non-hacking code).
+
+---
+
 ## [2.1.0] - 2026-06-04
 
 ### Added

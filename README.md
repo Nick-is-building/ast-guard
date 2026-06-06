@@ -49,9 +49,9 @@ All results are fully reproducible. See [benchmarks/RESULTS.md](benchmarks/RESUL
 | TRACE taxonomy (Deshpande et al. 2026) | Pair | 33 | F1 | **95.7%** |
 | School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** |
 | Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** |
-| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity† | **84.2%** |
-| MALT — `hardcoded_solution` | Standalone | 429 | Detection Rate | **70.9%** |
-| MALT — `bypass_constraints` | Standalone | 2,379 | Detection Rate | **41.7%** |
+| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity† | **94.9%** |
+| MALT — `hardcoded_solution` | Standalone | 429 | Detection Rate | **46.9%** |
+| MALT — `bypass_constraints` | Standalone | 2,379 | Detection Rate | **33.2%** |
 
 † TNR measured on the `normal` label only (77,369 samples); see [RESULTS.md](benchmarks/RESULTS.md) for the full confusion matrix.
 
@@ -63,7 +63,7 @@ These approaches are complementary, not competing. ast-guard handles structural 
 |----------|--------|-----------|---------|---------------|-------|
 | GPT-4o reviewer | LLM-as-judge | $0.01–0.10 | 500–2000ms | No | Semantic + Structural |
 | RewardHackWatch | ML + Regex + AST | GPU required | varies | No | Trajectory-level |
-| **ast-guard v2.0** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
+| **ast-guard v2.1.2** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
 
 ---
 
@@ -227,7 +227,7 @@ telemetry = false
 
 ## Known Limitations
 
-- **Standalone precision is lower than pair mode** by design. Without a baseline, contextual disambiguation is harder. The MALT false-positive rate on `normal` samples is the current calibration point — intentionally conservative.
+- **Standalone precision is lower than pair mode** by design. Without a baseline, contextual disambiguation is harder. The MALT false-positive rate on `normal` samples (5.1% at v2.1.2) is the current calibration point — intentionally conservative.
 - **Semantic hacks are outside scope.** Code that is structurally normal but logically wrong, or that games a task specification without a structural trace, requires semantic understanding. That is the job of LLM-based reviewers and downstream test suites.
 - **Bash and JavaScript adapters are less mature than the Python core.** Pattern coverage is narrower; false-positive calibration is less refined.
 - **Thresholds are empirically calibrated.** Defaults are informed starting points, not final optima. See [METHODOLOGY.md](benchmarks/METHODOLOGY.md) for the full iteration history.
@@ -270,7 +270,7 @@ python -m benchmarks.run_benchmark --benchmark malt --mode strict
   author = {Nick},
   year   = {2026},
   url    = {https://github.com/Nick-is-building/ast-guard},
-  version = {2.0.0}
+  version = {2.1.2}
 }
 ```
 
