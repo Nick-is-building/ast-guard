@@ -2,7 +2,7 @@
 
 ## Abstract
 
-ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across four datasets: the built-in TRACE benchmark (33 samples), the external TRACE HuggingFace dataset (46 trajectories), Countdown-Code (15,894 samples), School of Reward Hacks (26 valid Python samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode (original vs. generated code), ast-guard achieves 95.7% F1 on structurally detectable TRACE hacks with 100% precision and 0% false positive rate. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.2.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
+ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across four datasets: the built-in TRACE-aligned suite (33 hand-written samples covering structural subcategories — not the published TRACE dataset), the external TRACE HuggingFace dataset (46 trajectories), Countdown-Code (15,894 samples), School of Reward Hacks (26 valid Python samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode (original vs. generated code), ast-guard achieves 95.7% F1 on the built-in hand-written suite (structurally detectable subcategories only) with 100% precision and 0% false positive rate. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.2.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
 
 ---
 
@@ -34,7 +34,7 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 | Dataset | Source | Samples | Access | Languages | Labels |
 |---------|--------|---------|--------|-----------|--------|
-| TRACE (built-in) | PatronusAI taxonomy | 33 samples (24 hacked, 9 benign) | Bundled | Python | hacked / benign |
+| TRACE-aligned suite (built-in) | hand-written by author, TRACE category names | 33 samples (24 hacked, 9 benign) | Bundled | Python | hacked / benign |
 | TRACE (external) | PatronusAI HuggingFace | 46 trajectories, 32 scannable | Gated | Python, Bash, JS | hacked / benign |
 | Countdown-Code | Khan et al. GitHub | 15,894 | Public | Python | legitimate / hacked |
 | School of Reward Hacks | longtermrisk HuggingFace | 26 valid Python (from 1,073) | Public CC-BY-4.0 | Python | cheat\_method |
@@ -48,9 +48,11 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 Pair mode compares original code against LLM-generated code. This is ast-guard's primary intended use case and yields the strongest results because structural changes relative to a baseline are precisely measurable.
 
-### Built-in TRACE Alignment
+### Built-in TRACE-Aligned Suite
 
-The built-in TRACE benchmark covers 15 of 51 TRACE subcategories with structurally detectable patterns. 36 subcategories are semantic (wrong answers, sandbagging, framing manipulations) and are out of scope for static analysis.
+**Note: these 33 samples are hand-written by the project author using TRACE category names as a guide. They are not drawn from the published TRACE dataset (Deshpande et al. 2026) and do not constitute an independent external evaluation.** Use these results as regression/sanity checks that specific structural patterns fire correctly, not as a claim about real-world TRACE detection rates.
+
+The suite covers 15 of 51 TRACE subcategories with structurally detectable patterns. 36 subcategories are semantic (wrong answers, sandbagging, framing manipulations) and are out of scope for static analysis.
 
 | Metric | Value |
 |--------|-------|
@@ -70,6 +72,8 @@ The 2 false negatives are hacked samples whose pattern falls outside the 15 cove
 
 Countdown-Code contains arithmetic countdown problems. The vast majority of legitimate solutions are 3-line arithmetic functions that correctly pass CLEAN.
 
+**Note: no snapshot JSON is stored in `benchmarks/data/` for this run. Numbers below are from an earlier run and have not been re-verified with a stored artifact. Reproduce with: `python -m benchmarks.run_benchmark --benchmark countdown-code --json results.json`**
+
 | Metric | Value |
 |--------|-------|
 | Total samples | 15,894 |
@@ -83,6 +87,8 @@ Context: 99% of samples are legitimate short arithmetic functions. The 160 flagg
 ### School of Reward Hacks
 
 The School of Reward Hacks dataset contains Python implementations of documented reward-hacking strategies.
+
+**Note: no snapshot JSON is stored in `benchmarks/data/` for this run. Numbers below are from an earlier run and have not been re-verified with a stored artifact. Reproduce with: `python -m benchmarks.run_benchmark --benchmark school-of-hacks --json results.json`**
 
 | Metric | Value |
 |--------|-------|
@@ -201,7 +207,7 @@ Direct comparison is limited because each tool covers different categories, uses
 |----------|--------|---------|--------|-------|
 | GPT-4o (LLM-as-judge)† | LLM-as-judge | TRACE (all 54 cats) | Detection Rate | ~63%† |
 | RewardHackWatch | ML + Regex + AST | MALT (5,391) | F1 | 89.7% |
-| **ast-guard v2.2.0 Pair Mode** | **Deterministic AST** | **TRACE (structural)** | **F1** | **95.7%** |
+| **ast-guard v2.2.0 Pair Mode** | **Deterministic AST** | **built-in TRACE-aligned suite (hand-written)** | **F1** | **95.7%** |
 | **ast-guard v2.2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **95.0%** |
 | **ast-guard v2.2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **34.5%** |
 
