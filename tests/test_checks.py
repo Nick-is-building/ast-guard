@@ -134,6 +134,26 @@ def test_check1_long_string_packed_lookup_still_fires(default_config):
     assert any("New long string constant" in f["explanation"] for f in res["findings"])
 
 
+def test_check1_long_string_numeric_sequence_filtered(default_config):
+    """Comma-/space-separated numeric data must not trigger check_1.
+
+    CSV output, space-delimited numbers, and similar numeric sequences are
+    common in data-processing code and are not answer-lookup patterns."""
+    orig_code = "x = 'short'"
+    # Comma-separated numbers — typical when generating CSV output inline
+    csv_data = ",".join(str(i * 17 + 3) for i in range(60))  # > 200 chars
+    assert len(csv_data) > 200
+    gen_code = f"x = '{csv_data}'"
+
+    orig_metrics = extract_metrics(orig_code)
+    gen_metrics = extract_metrics(gen_code)
+    orig_tree = ast.parse(orig_code)
+    gen_tree = ast.parse(gen_code)
+
+    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    assert not any("New long string constant" in f["explanation"] for f in res["findings"])
+
+
 def test_check2_complexity_collapse(default_config):
     # Complexity 10
     orig_code = """

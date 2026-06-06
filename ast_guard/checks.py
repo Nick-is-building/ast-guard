@@ -53,6 +53,22 @@ def _is_binary_blob_string(s: str) -> bool:
     return has_digit and has_letter
 
 
+def _is_numeric_sequence_string(s: str) -> bool:
+    """True when `s` is a long sequence of numbers with separators (CSV, space-delimited data).
+
+    Comma- or space-delimited numeric data (e.g. "17,42,3,9,..." or
+    "100 200 300 ...") appears in data-processing and I/O code and is not an
+    answer-lookup pattern. Distinct from pipe-separated word tables (high
+    letter density) and from packed hex blobs (caught by _is_binary_blob_string).
+    """
+    n = len(s)
+    if n < 100:
+        return False
+    digits = sum(1 for c in s if c.isdigit())
+    letters = sum(1 for c in s if c.isalpha())
+    return (digits / n) > 0.50 and (letters / n) < 0.15
+
+
 def _long_string_findings(strings, tree, long_string_len):
     """Return WARNING findings for each string in `strings` that exceeds long_string_len chars.
 
@@ -64,6 +80,7 @@ def _long_string_findings(strings, tree, long_string_len):
         if len(s) > long_string_len
         and not _is_natural_text_string(s)
         and not _is_binary_blob_string(s)
+        and not _is_numeric_sequence_string(s)
     )
     if not long_strings:
         return []
