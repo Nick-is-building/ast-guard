@@ -13,9 +13,29 @@ structural reward-hacking patterns in source code BEFORE it executes.
 Pure AST analysis. No LLM, no ML, no network calls in the scan path.
 Zero external dependencies in the Python core.
 
-Status: v2.0.0. Current test count, LOC, and latency: see
+Status: v2.2.0. Current test count, LOC, and latency: see
 `benchmarks/RESULTS.md` and `pytest tests/ -q`. Do not hard-code these
 numbers here — they drift.
+
+## Vision
+
+**ast-guard's goal is to become the standard pre-execution layer for
+LLM-generated code** — the default static gate that sits between code
+generation and code execution in every serious RL-training pipeline,
+agent scaffold, and code-review CI workflow.
+
+The emphasis on *static* and *pre-execution* is intentional and
+non-negotiable. ast-guard is not a semantic reviewer: it never tries to
+judge whether code does the right thing, only whether it is structurally
+consistent with the original task. Semantic judgment (wrong answers,
+sandbagging, adversarial framing) requires an LLM reviewer and is
+explicitly out of scope. The value proposition is:
+
+- **Zero latency cost** — deterministic AST traversal, <50 ms per scan.
+- **Zero false-model-dependency** — cannot share failure modes with the
+  generator it monitors.
+- **Composable** — drops in as a filter before any LLM-as-judge layer,
+  not as a replacement for it.
 
 ## Why it exists
 
@@ -54,10 +74,14 @@ ast_guard/
 
 benchmarks/
   RESULTS.md           publication-quality results across all datasets
-  METHODOLOGY.md       6-iteration calibration history + FP analysis
-  data/                iteration_log.json, malt_summary.json
+  METHODOLOGY.md       13-iteration calibration history + FP analysis +
+                       run artifact index
+  data/                iteration_log.json, malt_summary.json (v2.0.0 epoch,
+                       historical), malt_v2_2_0.json (current MALT artifact)
   loaders/             TRACE, MALT, Countdown, EvilGenie, Terminal Wrench,
-                       School-of-Hacks, SpecBench
+                       School-of-Hacks, SpecBench.
+                       EvilGenie, SpecBench, Helff carry a # STATUS: comment
+                       at the top — their field names are unverified guesses.
   structural_benchmark/   36 hand-curated ground-truth pairs (100% F1)
   run_benchmark.py     unified runner
 

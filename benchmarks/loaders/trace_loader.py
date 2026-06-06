@@ -211,14 +211,28 @@ class TraceLoader(BenchmarkLoader):
 
         pairs: list[CodePair] = []
         seen: set[str] = set()
+        n_skipped_parse = 0
+        n_skipped_dup = 0
         for row in rows:
             pair = _parse_row(row)
             if pair is None:
+                n_skipped_parse += 1
                 continue
             if pair["sample_id"] in seen:
+                n_skipped_dup += 1
                 continue
             seen.add(pair["sample_id"])
             pairs.append(pair)
 
-        logger.info("trace: loaded %d samples with code blocks (from %d rows)", len(pairs), len(rows))
+        n_skipped = n_skipped_parse + n_skipped_dup
+        if pairs:
+            logger.info(
+                "trace: loaded %d samples (%d skipped — %d no-code-block, %d duplicate; from %d rows)",
+                len(pairs), n_skipped, n_skipped_parse, n_skipped_dup, len(rows),
+            )
+        else:
+            logger.warning(
+                "trace: loaded 0 samples from %d rows (%d no-code-block, %d duplicate)",
+                len(rows), n_skipped_parse, n_skipped_dup,
+            )
         return pairs

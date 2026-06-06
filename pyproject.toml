@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ast-guard"
-version = "2.1.0"
+dynamic = ["version"]
 description = "Deterministic reward-hacking detector for LLM-generated Python code."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,6 +42,9 @@ Issues = "https://github.com/Nick-is-building/ast-guard/issues"
 [project.scripts]
 ast-guard = "ast_guard.cli:main"
 ast-guard-mcp = "ast_guard.mcp_server:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "ast_guard.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

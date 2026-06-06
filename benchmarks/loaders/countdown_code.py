@@ -200,15 +200,29 @@ class CountdownCodeLoader(BenchmarkLoader):
         records = _collect_records(self.data_dir)
         pairs: list[CodePair] = []
         seen: set[str] = set()
+        n_skipped_parse = 0
+        n_skipped_dup = 0
 
         for idx, rec in enumerate(records):
             pair = _extract_from_record(rec, idx)
             if pair is None:
+                n_skipped_parse += 1
                 continue
             if pair["sample_id"] in seen:
+                n_skipped_dup += 1
                 continue
             seen.add(pair["sample_id"])
             pairs.append(pair)
 
-        logger.info("countdown-code: loaded %d samples", len(pairs))
+        n_skipped = n_skipped_parse + n_skipped_dup
+        if pairs:
+            logger.info(
+                "countdown-code: loaded %d samples (%d skipped — %d unparseable, %d duplicates)",
+                len(pairs), n_skipped, n_skipped_parse, n_skipped_dup,
+            )
+        else:
+            logger.warning(
+                "countdown-code: loaded 0 samples from %d records (%d unparseable, %d duplicates)",
+                len(records), n_skipped_parse, n_skipped_dup,
+            )
         return pairs

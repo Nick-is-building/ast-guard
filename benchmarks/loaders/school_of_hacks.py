@@ -205,23 +205,45 @@ class SchoolOfHacksLoader(BenchmarkLoader):
         records = _collect_records(self.data_dir)
         pairs: list[CodePair] = []
         seen: set[str] = set()
+        n_skipped_noncoding = 0
+        n_skipped_none = 0
+        n_skipped_syntax = 0
+        n_skipped_dup = 0
 
         for idx, rec in enumerate(records):
             if not _is_coding_sample(rec):
+                n_skipped_noncoding += 1
                 continue
             pair = _extract_pair(rec, idx)
             if pair is None:
+                n_skipped_none += 1
                 continue
             # Only keep samples where generated_code parses as valid Python.
             # Non-Python text causes Syntax Error CRITICALs that inflate results.
             try:
                 ast.parse(pair["generated_code"])
             except SyntaxError:
+                n_skipped_syntax += 1
                 continue
             if pair["sample_id"] in seen:
+                n_skipped_dup += 1
                 continue
             seen.add(pair["sample_id"])
             pairs.append(pair)
 
-        logger.info("school-of-hacks: loaded %d valid-Python coding samples (%d total records)", len(pairs), len(records))
+        n_skipped = n_skipped_noncoding + n_skipped_none + n_skipped_syntax + n_skipped_dup
+        if pairs:
+            logger.info(
+                "school-of-hacks: loaded %d samples (%d skipped — %d non-coding, "
+                "%d no-code-field, %d syntax-error, %d duplicate; from %d total records)",
+                len(pairs), n_skipped, n_skipped_noncoding, n_skipped_none,
+                n_skipped_syntax, n_skipped_dup, len(records),
+            )
+        else:
+            logger.warning(
+                "school-of-hacks: loaded 0 samples from %d records "
+                "(%d non-coding, %d no-code-field, %d syntax-error, %d duplicate)",
+                len(records), n_skipped_noncoding, n_skipped_none,
+                n_skipped_syntax, n_skipped_dup,
+            )
         return pairs

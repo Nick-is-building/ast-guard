@@ -5,6 +5,11 @@ Clones https://github.com/JonathanGabor/EvilGenie and extracts 154 problem
 pairs from LiveCodeBench. Each pair provides an original solution and the
 agent's hacked solution, all Python.
 """
+# STATUS: format unverified — EvilGenie is a live-harness benchmark (agents
+# compete against a running judge), not a static pair-dataset. There is no
+# released JSON dump; field names here (original_solution, hacked_solution,
+# etc.) are guessed from the repo README and LiveCodeBench conventions. Do not
+# trust load_samples() output until validated against real downloaded data.
 from __future__ import annotations
 
 import json
@@ -131,6 +136,8 @@ class EvilGenieLoader(BenchmarkLoader):
             return pairs
 
         seen_ids: set[str] = set()
+        n_records_total = 0
+        n_skipped = 0
 
         for path in files:
             try:
@@ -144,16 +151,28 @@ class EvilGenieLoader(BenchmarkLoader):
                 continue
 
             for idx, rec in enumerate(records):
+                n_records_total += 1
                 if not isinstance(rec, dict):
+                    n_skipped += 1
                     continue
                 pair = _extract_from_record(rec, idx)
                 if pair is None:
+                    n_skipped += 1
                     continue
                 # Deduplicate by sample_id.
                 if pair["sample_id"] in seen_ids:
+                    n_skipped += 1
                     continue
                 seen_ids.add(pair["sample_id"])
                 pairs.append(pair)
 
-        logger.info("evilgenie: loaded %d samples", len(pairs))
+        if pairs:
+            logger.info(
+                "evilgenie: loaded %d samples (%d skipped from %d records)",
+                len(pairs), n_skipped, n_records_total,
+            )
+        else:
+            logger.warning(
+                "evilgenie: loaded 0 samples — format likely unverified; see STATUS comment at top of file",
+            )
         return pairs

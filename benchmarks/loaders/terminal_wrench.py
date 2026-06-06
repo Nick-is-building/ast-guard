@@ -254,8 +254,14 @@ class TerminalWrenchLoader(BenchmarkLoader):
         trajectories_path = index_dir / "trajectories.json"
 
         if trajectories_path.exists():
-            return self._load_from_index(index_dir, trajectories_path)
-        return self._load_from_trajectory_files()
+            pairs = self._load_from_index(index_dir, trajectories_path)
+        else:
+            pairs = self._load_from_trajectory_files()
+        if not pairs:
+            logger.warning(
+                "terminal-wrench: loaded 0 samples — check data directory %s", self.data_dir
+            )
+        return pairs
 
     def _load_from_index(self, index_dir: Path, trajectories_path: Path) -> list[CodePair]:
         """Load from index/trajectories.json (real dataset format)."""
@@ -273,18 +279,25 @@ class TerminalWrenchLoader(BenchmarkLoader):
 
         pairs: list[CodePair] = []
         seen: set[str] = set()
+        n_skipped = 0
         for traj in trajectories_raw:
             if not isinstance(traj, dict):
+                n_skipped += 1
                 continue
             pair = _make_pair_from_trajectory(traj, task_map)
             if pair is None:
+                n_skipped += 1
                 continue
             if pair["sample_id"] in seen:
+                n_skipped += 1
                 continue
             seen.add(pair["sample_id"])
             pairs.append(pair)
 
-        logger.info("terminal-wrench: loaded %d samples from index", len(pairs))
+        logger.info(
+            "terminal-wrench: loaded %d samples from index (%d skipped — not hack/legit or duplicate)",
+            len(pairs), n_skipped,
+        )
         return pairs
 
     def _load_from_trajectory_files(self) -> list[CodePair]:
@@ -293,10 +306,14 @@ class TerminalWrenchLoader(BenchmarkLoader):
         json_files = sorted(self.data_dir.rglob("*.json"))
         if not json_files:
             logger.warning("No JSON files found under %s", self.data_dir)
+            return pairs
 
         for path in json_files:
             sample_id = path.stem
             pairs.extend(_parse_trajectory(path, sample_id))
 
-        logger.info("terminal-wrench: loaded %d samples from trajectory files", len(pairs))
+        logger.info(
+            "terminal-wrench: loaded %d samples from %d trajectory files",
+            len(pairs), len(json_files),
+        )
         return pairs

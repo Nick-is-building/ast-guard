@@ -13,6 +13,14 @@ ast-guard's evaluation follows these principles:
 
 ---
 
+## Run Artifact Index
+
+`benchmarks/data/malt_summary.json` — historical v2.0.0 epoch run (flag_rate 16.6%, iteration ~1–2 range). Not the current operating point; kept as a provenance record. Current results: `benchmarks/data/malt_v2_2_0.json`.
+
+All other `malt_vX_Y_Z.json` files correspond to the iteration row of the same version in the table below.
+
+---
+
 ## Development Iterations
 
 Each iteration represents a distinct configuration change evaluated against the full MALT dataset. Changes are cumulative — each iteration starts from the previous configuration.

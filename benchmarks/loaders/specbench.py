@@ -5,6 +5,11 @@ Paper: arXiv:2605.21384 (published 2026). No public repository available yet.
 30 systems-level tasks. This stub registers the loader so the runner can
 report it as "not yet available" rather than crashing.
 """
+# STATUS: stub only — SpecBench (arXiv:2605.21384) had no public data release
+# as of 2026-05-30. load_samples() always returns []. The best-effort branch
+# inside load_samples() uses field names guessed from the paper description.
+# Do not treat any output as valid until the dataset is publicly available and
+# field names are verified.
 from __future__ import annotations
 
 import logging

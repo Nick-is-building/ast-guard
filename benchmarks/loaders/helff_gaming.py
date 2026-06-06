@@ -7,6 +7,11 @@ predictions. Directly relevant to Check 5 (extensional enumeration analysis).
 
 Reference: Helff et al., "LLMs Gaming Verifiers", arXiv:2604.15149.
 """
+# STATUS: format unverified — the llms-gaming-verifiers repo structure and
+# JSON schema have not been inspected with real data on hand. Field names
+# (genuine_prediction, shortcut_prediction, etc.) are guessed from
+# arXiv:2604.15149. Do not trust load_samples() output until validated against
+# real downloaded data.
 from __future__ import annotations
 
 import json
@@ -141,15 +146,28 @@ class HelffGamingLoader(BenchmarkLoader):
         records = _collect_records(self.data_dir)
         pairs: list[CodePair] = []
         seen: set[str] = set()
+        n_skipped_none = 0
+        n_skipped_dup = 0
 
         for idx, rec in enumerate(records):
             pair = _extract_pair(rec, idx)
             if pair is None:
+                n_skipped_none += 1
                 continue
             if pair["sample_id"] in seen:
+                n_skipped_dup += 1
                 continue
             seen.add(pair["sample_id"])
             pairs.append(pair)
 
-        logger.info("helff-gaming: loaded %d samples", len(pairs))
+        n_skipped = n_skipped_none + n_skipped_dup
+        if pairs:
+            logger.info(
+                "helff-gaming: loaded %d samples (%d skipped — %d no-field-match, %d duplicate; from %d records)",
+                len(pairs), n_skipped, n_skipped_none, n_skipped_dup, len(records),
+            )
+        else:
+            logger.warning(
+                "helff-gaming: loaded 0 samples — format likely unverified; see STATUS comment at top of file",
+            )
         return pairs
