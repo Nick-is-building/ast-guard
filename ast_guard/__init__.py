@@ -541,9 +541,20 @@ def scan_standalone(
 
     # Check 6 runs before the literal threshold decision so a co-occurring
     # behavioral signal can lower the threshold from 80 to 50.
-    _c6_result_raw = risk_score_standalone(
-        code, gen_tree, gen_metrics, language, repo_baseline=_repo_baseline,
-    )
+    # Python: full AST-based behavioral analysis via check_behavioral.
+    # Bash/JS: language-specific scorers that work from metrics + regex on code.
+    if language == "python":
+        _c6_result_raw = risk_score_standalone(
+            code, gen_tree, gen_metrics, language, repo_baseline=_repo_baseline,
+        )
+    elif language == "bash":
+        from ast_guard import lang_bash_behavioral as _bash_beh
+        _c6_result_raw = _bash_beh.score(code, gen_metrics)
+    elif language == "javascript":
+        from ast_guard import lang_javascript_behavioral as _js_beh
+        _c6_result_raw = _js_beh.score(code, gen_metrics)
+    else:
+        _c6_result_raw = {"score": 0, "severity": "CLEAN", "findings": []}
 
     lit_gen = gen_metrics.get("literal_count", 0)
     _lit_threshold = 50 if _c6_result_raw["score"] >= 30 else 80

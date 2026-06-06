@@ -287,6 +287,107 @@ def _collect_function_complexities(root) -> dict[str, int]:
     return complexities
 
 
+def _is_js_literal(node) -> bool:
+    """Return True if ``node`` is a JavaScript literal value."""
+    return node.type in ("string", "number", "true", "false", "null")
+
+
+def _switch_case_is_literal(switch_case_node) -> bool:
+    """Return True if a switch_case matches a literal value (not a variable)."""
+    for c in switch_case_node.children:
+        if not c.is_named:
+            continue
+        return _is_js_literal(c)
+    return False
+
+
+def _if_condition_has_literal(if_node) -> bool:
+    """Return True if the if-condition is a literal equality comparison (=== or ==)."""
+    for c in if_node.children:
+        if c.type != "parenthesized_expression":
+            continue
+        for inner in c.children:
+            if inner.type != "binary_expression":
+                continue
+            ops = {ch.type for ch in inner.children}
+            if "===" not in ops and "==" not in ops:
+                continue
+            named = [ch for ch in inner.children if ch.is_named]
+            if any(_is_js_literal(n) for n in named):
+                return True
+    return False
+
+
+def _collect_enumeration_analysis(root) -> list:
+    """
+    Per-function enumeration pattern statistics for Check 5.
+
+    For each function returns:
+        {"name": str, "total_ifs": int, "enumeration_ifs": int, "loop_count": int}
+
+    total_ifs       — if_statement + switch_case nodes in the function body
+    enumeration_ifs — subset with a literal constant in the branch condition
+    loop_count      — for/while/do loop nodes in the function body
+
+    Known limitation: the object-as-lookup dispatch pattern
+        ``const actions = { foo: fn, bar: fn2 }; actions[var]();``
+    is not detected as enumeration. Detecting it requires tracking the
+    variable type through assignment, which is beyond tree-sitter structural
+    analysis and would belong to a future dataflow pass.
+    """
+    result: list[dict] = []
+
+    def _analyze(func_node, name: str) -> None:
+        body = func_node.child_by_field_name("body")
+        target = body if body is not None else func_node
+
+        total_ifs = 0
+        enum_ifs = 0
+        loop_count = 0
+
+        for node in _walk_skip_funcs(target, skip_root=False):
+            t = node.type
+            if t == "if_statement":
+                total_ifs += 1
+                if _if_condition_has_literal(node):
+                    enum_ifs += 1
+            elif t == "switch_case":
+                total_ifs += 1
+                if _switch_case_is_literal(node):
+                    enum_ifs += 1
+            elif t in _LOOP_NODES:
+                loop_count += 1
+
+        result.append({
+            "name": name,
+            "total_ifs": total_ifs,
+            "enumeration_ifs": enum_ifs,
+            "loop_count": loop_count,
+        })
+
+    def _visit(node, prefix: str) -> None:
+        if node.type in _FUNCTION_NODES:
+            name = _function_name(node)
+            qname = f"{prefix}.{name}" if prefix else name
+            _analyze(node, qname)
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for c in body.children:
+                    _visit(c, qname)
+        elif node.type == "class_declaration":
+            name_node = node.child_by_field_name("name")
+            cname = _node_text(name_node) if name_node is not None else "<anon>"
+            child_prefix = f"{prefix}.{cname}" if prefix else cname
+            for c in node.children:
+                _visit(c, child_prefix)
+        else:
+            for c in node.children:
+                _visit(c, prefix)
+
+    _visit(root, "")
+    return result
+
+
 def extract_metrics(code: str) -> dict:
     """
     Parse JavaScript source and return ast-guard's standard metric dictionary.
@@ -304,6 +405,7 @@ def extract_metrics(code: str) -> dict:
     literal_count, long_string_count = _count_literals_and_long_strings(root)
     call_list, import_list = _extract_calls_and_imports(root)
     function_complexities = _collect_function_complexities(root)
+    enumeration_analysis = _collect_enumeration_analysis(root)
 
     dangerous_calls = sorted({
         c for c in call_list
@@ -331,7 +433,7 @@ def extract_metrics(code: str) -> dict:
         "max_set_literal_size": 0,
         "max_dict_literal_size": 0,
         "function_complexities": function_complexities,
-        "enumeration_analysis": [],
+        "enumeration_analysis": enumeration_analysis,
         "dangerous_calls": dangerous_calls,
         "dangerous_imports": dangerous_imports,
         "language": "javascript",

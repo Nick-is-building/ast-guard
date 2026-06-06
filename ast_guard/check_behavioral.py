@@ -629,19 +629,6 @@ def risk_score_standalone(
         })
         total_score += score
 
-    # --- Non-Python: rely on dangerous_calls metric from the language adapter ---
-    if language != "python":
-        for call in sorted(set(metrics.get("dangerous_calls", []))):
-            add(
-                "dangerous_call", 50, None,
-                f"Dangerous {language} call '{call}' detected.",
-            )
-        return {
-            "score": total_score,
-            "severity": _severity_from_score(total_score, findings),
-            "findings": findings,
-        }
-
     # --- Python: full AST analysis ---
     var_map = _build_simple_assignments(tree)
     imported_modules = _collect_imported_modules(tree)

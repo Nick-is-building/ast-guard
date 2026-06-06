@@ -11,7 +11,12 @@ pytest.importorskip("tree_sitter")
 pytest.importorskip("tree_sitter_bash")
 pytest.importorskip("tree_sitter_javascript")
 
-from ast_guard.multilang import detect_language, extract_metrics_multilang
+from ast_guard.multilang import (
+    detect_language,
+    detect_language_with_info,
+    extract_metrics_multilang,
+    is_multilang_available,
+)
 from ast_guard import lang_bash, lang_javascript, scan_multilang
 
 
@@ -353,3 +358,228 @@ class TestScanMultilangErrorSurfacing:
         )
         assert r["verdict"] == "CLEAN"
         assert "checks" in r and "telemetry" in r
+
+
+# ---------------------------------------------------------------------------
+# Enumeration analysis — Bash
+# ---------------------------------------------------------------------------
+
+class TestBashEnumerationAnalysis:
+    def test_tp_case_statement_literal_branches(self):
+        """Bash case with 6 literal arms → Check 5 WARNING in pair mode."""
+        code = """#!/bin/bash
+dispatch() {
+  case "$1" in
+    start)   echo starting   ;;
+    stop)    echo stopping   ;;
+    restart) echo restarting ;;
+    reload)  echo reloading  ;;
+    status)  echo status     ;;
+    help)    echo help       ;;
+  esac
+}
+"""
+        m = extract_metrics_multilang(code, "bash")
+        ea = m["enumeration_analysis"]
+        assert len(ea) == 1
+        entry = ea[0]
+        assert entry["total_ifs"] >= 6
+        assert entry["enumeration_ifs"] >= 6
+        assert entry["loop_count"] == 0
+
+    def test_tp_check5_fires_via_scan_multilang(self):
+        """End-to-end: case-dispatch function triggers Check 5 WARNING."""
+        orig = "#!/bin/bash\ndispatch() { echo generic; }\n"
+        gen = """#!/bin/bash
+dispatch() {
+  case "$1" in
+    start)   echo starting   ;;
+    stop)    echo stopping   ;;
+    restart) echo restarting ;;
+    reload)  echo reloading  ;;
+    status)  echo status     ;;
+    help)    echo help       ;;
+  esac
+}
+"""
+        r = scan_multilang(orig, gen, language="bash", telemetry_enabled=False)
+        assert r["checks"]["check_5_extensional_enumeration"]["status"] == "WARNING"
+
+    def test_tn_case_with_wildcard_only(self):
+        """A case with a catchall wildcard arm and one literal does not fire."""
+        code = """#!/bin/bash
+handle() {
+  case "$1" in
+    start) echo start ;;
+    *)     echo other ;;
+  esac
+}
+"""
+        m = extract_metrics_multilang(code, "bash")
+        ea = m["enumeration_analysis"]
+        assert ea[0]["total_ifs"] == 2        # start + wildcard
+        assert ea[0]["enumeration_ifs"] == 1  # only 'start' is literal; '*' is not
+
+    def test_tn_loop_present_suppresses_check5(self):
+        """A for-loop inside the function keeps loop_count > 1 → Check 5 silent."""
+        code = """#!/bin/bash
+process() {
+  for item in a b c d e; do
+    case "$item" in
+      a) echo a ;;
+      b) echo b ;;
+      c) echo c ;;
+      d) echo d ;;
+      e) echo e ;;
+      f) echo f ;;
+    esac
+  done
+}
+"""
+        m = extract_metrics_multilang(code, "bash")
+        ea = m["enumeration_analysis"]
+        assert ea[0]["loop_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Enumeration analysis — JavaScript
+# ---------------------------------------------------------------------------
+
+class TestJSEnumerationAnalysis:
+    def test_tp_switch_literal_cases(self):
+        """JS switch with 6 string cases → enumeration_analysis populated."""
+        code = """
+function dispatch(action) {
+  switch(action) {
+    case "start":   doStart();   break;
+    case "stop":    doStop();    break;
+    case "reload":  doReload();  break;
+    case "status":  doStatus();  break;
+    case "restart": doRestart(); break;
+    case "help":    doHelp();    break;
+    default: throw new Error();
+  }
+}
+"""
+        m = extract_metrics_multilang(code, "javascript")
+        ea = m["enumeration_analysis"]
+        assert any(e["name"] == "dispatch" and e["enumeration_ifs"] >= 6 for e in ea)
+
+    def test_tp_check5_fires_via_scan_multilang(self):
+        """End-to-end: JS switch-dispatch triggers Check 5 WARNING."""
+        orig = "function dispatch(a) { return a; }\n"
+        gen = """
+function dispatch(action) {
+  switch(action) {
+    case "start":   return 1;
+    case "stop":    return 2;
+    case "reload":  return 3;
+    case "status":  return 4;
+    case "restart": return 5;
+    case "help":    return 6;
+    default: return 0;
+  }
+}
+"""
+        r = scan_multilang(orig, gen, language="javascript", telemetry_enabled=False)
+        assert r["checks"]["check_5_extensional_enumeration"]["status"] == "WARNING"
+
+    def test_tn_non_literal_switch_cases(self):
+        """Switch cases with variable values are not counted as enumeration."""
+        code = """
+function route(req) {
+  switch(req.method) {
+    case METHOD_GET:  return handleGet(req);
+    case METHOD_POST: return handlePost(req);
+    case METHOD_PUT:  return handlePut(req);
+  }
+}
+"""
+        m = extract_metrics_multilang(code, "javascript")
+        ea = m["enumeration_analysis"]
+        route = next((e for e in ea if e["name"] == "route"), None)
+        assert route is None or route["enumeration_ifs"] == 0
+
+    def test_tn_if_else_with_loop_suppresses_check5(self):
+        """A for-loop inside the function suppresses Check 5."""
+        code = """
+function process(items) {
+  for (const item of items) {
+    if (item === "a") doA();
+    else if (item === "b") doB();
+    else if (item === "c") doC();
+    else if (item === "d") doD();
+    else if (item === "e") doE();
+    else if (item === "f") doF();
+  }
+}
+"""
+        m = extract_metrics_multilang(code, "javascript")
+        ea = m["enumeration_analysis"]
+        proc = next((e for e in ea if e["name"] == "process"), None)
+        assert proc is not None
+        assert proc["loop_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# detect_language_with_info
+# ---------------------------------------------------------------------------
+
+class TestDetectLanguageWithInfo:
+    def test_shebang_bash_method(self):
+        info = detect_language_with_info("#!/bin/bash\necho hi\n")
+        assert info["language"] == "bash"
+        assert info["method"] == "shebang"
+        assert info["score"] == 0
+
+    def test_shebang_python_method(self):
+        info = detect_language_with_info("#!/usr/bin/env python3\nprint(1)\n")
+        assert info["language"] == "python"
+        assert info["method"] == "shebang"
+
+    def test_shebang_node_method(self):
+        info = detect_language_with_info("#!/usr/bin/env node\nconsole.log(1)\n")
+        assert info["language"] == "javascript"
+        assert info["method"] == "shebang"
+
+    def test_keyword_score_python(self):
+        code = "def foo(x):\n    return x + 1\n"
+        info = detect_language_with_info(code)
+        assert info["language"] == "python"
+        assert info["method"] == "keyword_score"
+        assert info["score"] > 0
+
+    def test_keyword_score_bash(self):
+        code = "do_work() {\n  if [ -f x ]; then\n    echo yes\n  fi\n}\n"
+        info = detect_language_with_info(code)
+        assert info["language"] == "bash"
+        assert info["method"] == "keyword_score"
+        assert info["score"] > 0
+
+    def test_keyword_score_js(self):
+        code = "const x = require('fs');\nfunction f() { return 1; }\n"
+        info = detect_language_with_info(code)
+        assert info["language"] == "javascript"
+        assert info["method"] == "keyword_score"
+        assert info["score"] > 0
+
+    def test_empty_is_unknown(self):
+        info = detect_language_with_info("")
+        assert info["language"] == "unknown"
+        assert info["method"] == "unknown"
+        assert info["score"] == 0
+
+    def test_random_text_is_unknown(self):
+        info = detect_language_with_info("hello world just some text")
+        assert info["language"] == "unknown"
+        assert info["method"] == "unknown"
+
+
+class TestIsMultilangAvailable:
+    def test_returns_bool(self):
+        assert isinstance(is_multilang_available(), bool)
+
+    def test_available_in_this_env(self):
+        # Since this file is only executed when tree-sitter is importable
+        # (pytest.importorskip at the top), is_multilang_available must be True.
+        assert is_multilang_available() is True

@@ -92,6 +92,12 @@ def print_ansi_report(result: dict) -> None:
     print(f"{BOLD}Sensitivity Mode:{RESET} {mode.upper()}")
     print(f"{BOLD}Scan ID:{RESET} {scan_id}")
     print(f"{BOLD}Metrics Fingerprint:{RESET} {fingerprint}")
+    lang = result.get("language")
+    if lang and lang != "python":
+        via = result.get("language_detected_via", "")
+        lang_score = result.get("language_detection_score")
+        score_str = f", score: {lang_score}" if lang_score is not None else ""
+        print(f"{BOLD}Language:{RESET} {lang} [{via}{score_str}]")
     print("-" * 60)
     
     print(f"\n{BOLD}CHECK DETAILS:{RESET}")
@@ -209,6 +215,11 @@ def format_sarif_report(result: dict, original_file: str = "original.py", genera
                 }
             },
             "results": results,
+            "properties": {
+                k: result[k]
+                for k in ("language", "language_detected_via", "language_detection_score")
+                if k in result
+            },
             "artifacts": [
                 {"location": {"uri": original_file}},
                 {"location": {"uri": generated_file}}

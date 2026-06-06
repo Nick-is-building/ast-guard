@@ -21,6 +21,17 @@ import re
 
 SUPPORTED_LANGUAGES = ("python", "bash", "javascript")
 
+
+def is_multilang_available() -> bool:
+    """Return True if the optional tree-sitter extras are installed."""
+    try:
+        import tree_sitter  # noqa: F401
+        import tree_sitter_bash  # noqa: F401
+        import tree_sitter_javascript  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
 _SHEBANG_BASH = re.compile(r"^#!.*\b(bash|/sh|zsh|ksh|dash|ash)\b")
 _SHEBANG_PYTHON = re.compile(r"^#!.*\bpython[23]?\b")
 _SHEBANG_JS = re.compile(r"^#!.*\b(node|deno|bun)\b")
@@ -75,6 +86,38 @@ _BASH_PATTERNS = (
 
 def _score(code: str, patterns) -> int:
     return sum(weight for pattern, weight in patterns if pattern.search(code))
+
+
+def detect_language_with_info(code: str) -> dict:
+    """
+    Detect the source language of ``code`` and report *how* the decision was made.
+
+    Returns a dict:
+        ``language``  — one of ``"python"``, ``"bash"``, ``"javascript"``, or ``"unknown"``
+        ``method``    — ``"shebang"`` | ``"keyword_score"`` | ``"unknown"``
+        ``score``     — winning keyword score (0 when method is not ``"keyword_score"``)
+    """
+    if not code or not code.strip():
+        return {"language": "unknown", "method": "unknown", "score": 0}
+
+    first_line = code.lstrip().split("\n", 1)[0]
+    if first_line.startswith("#!"):
+        if _SHEBANG_PYTHON.match(first_line):
+            return {"language": "python", "method": "shebang", "score": 0}
+        if _SHEBANG_JS.match(first_line):
+            return {"language": "javascript", "method": "shebang", "score": 0}
+        if _SHEBANG_BASH.match(first_line):
+            return {"language": "bash", "method": "shebang", "score": 0}
+
+    scores = {
+        "python": _score(code, _PY_PATTERNS),
+        "javascript": _score(code, _JS_PATTERNS),
+        "bash": _score(code, _BASH_PATTERNS),
+    }
+    best = max(scores, key=scores.get)
+    if scores[best] == 0:
+        return {"language": "unknown", "method": "unknown", "score": 0}
+    return {"language": best, "method": "keyword_score", "score": scores[best]}
 
 
 def detect_language(code: str) -> str:

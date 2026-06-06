@@ -29,7 +29,8 @@ DEFAULT_CONFIG = {
         ]
     },
     "settings": {
-        "mode": "standard"  # "strict", "standard", "audit"
+        "mode": "standard",  # "strict", "standard", "audit"
+        "multilang": "auto",  # "auto" | true | false
     }
 }
 

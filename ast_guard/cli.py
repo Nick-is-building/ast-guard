@@ -2,7 +2,8 @@ import argparse
 import json
 import sys
 import os
-from ast_guard import scan, feedback, __version__
+from ast_guard import scan, scan_multilang, feedback, __version__
+from ast_guard.multilang import detect_language_with_info, is_multilang_available
 from ast_guard.output import print_ansi_report, format_json_report, format_sarif_report
 from ast_guard.telemetry import (
     export_telemetry,
@@ -98,6 +99,14 @@ def main():
     check_parser.add_argument("--json", action="store_true", help="Output the analysis report in JSON format")
     check_parser.add_argument("--sarif", action="store_true", help="Output the analysis report in SARIF v2.1.0 format for GitHub Security Tab")
     check_parser.add_argument("--no-telemetry", action="store_true", help="Disables local telemetry logging")
+    check_parser.add_argument(
+        "--language", choices=["python", "bash", "javascript", "auto"], default="auto",
+        help="Source language of the files being scanned (default: auto-detect)"
+    )
+    check_parser.add_argument(
+        "--no-multilang", action="store_true",
+        help="Force Python-only mode; disables language auto-detection and tree-sitter"
+    )
     
     # 2. feedback
     fb_parser = subparsers.add_parser("feedback", help="Submit feedback for a specific scan.")
@@ -139,9 +148,39 @@ def main():
             sys.exit(1)
             
         # Run Scan
-        mode_val = args.mode or "standard" # CLI default is standard
+        mode_val = args.mode or "standard"  # CLI default is standard
         telemetry_enabled = not args.no_telemetry
-        result = scan(orig_code, gen_code, mode=mode_val, telemetry_enabled=telemetry_enabled)
+        no_multilang = getattr(args, "no_multilang", False)
+
+        if no_multilang or not is_multilang_available():
+            result = scan(orig_code, gen_code, mode=mode_val, telemetry_enabled=telemetry_enabled)
+            result["language"] = "python"
+            result["language_detected_via"] = "forced" if no_multilang else "fallback"
+        else:
+            lang_arg = getattr(args, "language", "auto")
+            if lang_arg == "auto":
+                lang_info = detect_language_with_info(gen_code)
+            else:
+                lang_info = {"language": lang_arg, "method": "explicit", "score": 0}
+
+            detected = lang_info["language"]
+            if detected in ("python", "unknown"):
+                result = scan(orig_code, gen_code, mode=mode_val, telemetry_enabled=telemetry_enabled)
+                result["language"] = "python" if detected == "python" else "unknown"
+                result["language_detected_via"] = lang_info["method"]
+            else:
+                try:
+                    result = scan_multilang(
+                        orig_code, gen_code, language=detected,
+                        mode=mode_val, telemetry_enabled=telemetry_enabled,
+                    )
+                    result["language"] = detected
+                    result["language_detected_via"] = lang_info["method"]
+                    if lang_info["method"] == "keyword_score":
+                        result["language_detection_score"] = lang_info["score"]
+                except ImportError as exc:
+                    print(f"Error: multilang extras not installed: {exc}", file=sys.stderr)
+                    sys.exit(1)
         
         # Format and output results
         if args.sarif:
