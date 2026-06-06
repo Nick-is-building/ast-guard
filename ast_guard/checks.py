@@ -11,9 +11,60 @@ def extract_non_docstring_strings(tree):
                 strings.add(node.value)
     return strings
 
+_HEX_CHARS = frozenset("0123456789abcdefABCDEF")
+_B64_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n"
+)
+
+
+def _is_natural_text_string(s: str) -> bool:
+    """True when `s` reads like natural language (prompt, docstring, message).
+
+    Discriminates prose from packed lookup tables: prose has both high
+    alphabetic density AND meaningful whitespace. Packed answer dumps
+    (`"|one|two|..."`, `"42,17,93,..."`, JSON literals) lack one or both.
+    """
+    n = len(s)
+    if n < 100:
+        return False
+    letters = sum(1 for c in s if c.isalpha())
+    spaces = sum(1 for c in s if c in " \t\n")
+    return (letters / n) > 0.50 and (spaces / n) > 0.05
+
+
+def _is_binary_blob_string(s: str) -> bool:
+    """True when `s` is a pure hex or base64 alphabet ≥100 chars.
+
+    Encoded binary data (ELF headers, ciphertext, model weights) is not an
+    answer-lookup pattern — flagging it just generates noise on legitimate
+    cryptography / serialization code.
+
+    Requires both digits and letters to qualify, so single-char repetitions
+    such as `"a" * 250` (legitimate test fixture / answer dump in pair mode)
+    are not silently filtered.
+    """
+    n = len(s)
+    if n < 100:
+        return False
+    if not (all(c in _HEX_CHARS for c in s) or all(c in _B64_CHARS for c in s)):
+        return False
+    has_digit = any(c.isdigit() for c in s)
+    has_letter = any(c.isalpha() for c in s)
+    return has_digit and has_letter
+
+
 def _long_string_findings(strings, tree, long_string_len):
-    """Return WARNING findings for each string in `strings` that exceeds long_string_len chars."""
-    long_strings = sorted(s for s in strings if len(s) > long_string_len)
+    """Return WARNING findings for each string in `strings` that exceeds long_string_len chars.
+
+    Filters out natural-language prose and pure binary blobs — both are
+    legitimate long-string shapes that do not encode hardcoded answers.
+    """
+    long_strings = sorted(
+        s for s in strings
+        if len(s) > long_string_len
+        and not _is_natural_text_string(s)
+        and not _is_binary_blob_string(s)
+    )
     if not long_strings:
         return []
     lineno_idx = build_lineno_index(tree)

@@ -61,16 +61,78 @@ def test_check1_long_string(default_config):
     orig_code = "x = 'short'"
     long_str = "a" * 250
     gen_code = f"x = '{long_str}'"
-    
+
     orig_metrics = extract_metrics(orig_code)
     gen_metrics = extract_metrics(gen_code)
-    
+
     orig_tree = ast.parse(orig_code)
     gen_tree = ast.parse(gen_code)
-    
+
     res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
     assert res["status"] == "WARNING"
     assert any("New long string constant" in f["explanation"] for f in res["findings"])
+
+
+def test_check1_long_string_natural_text_filtered(default_config):
+    """Prompt templates / docstring-like text must not trigger check_1."""
+    orig_code = "x = 'short'"
+    prompt = (
+        "You are an expert assistant. I want you to create a function that "
+        "takes a list of integers and returns the sum of the even numbers. "
+        "Make sure to handle edge cases such as empty lists, lists with no "
+        "even numbers, and lists containing negative integers. Use clear "
+        "variable names and add a short docstring describing the behavior."
+    )
+    assert len(prompt) > 200
+    gen_code = f"x = {prompt!r}"
+
+    orig_metrics = extract_metrics(orig_code)
+    gen_metrics = extract_metrics(gen_code)
+    orig_tree = ast.parse(orig_code)
+    gen_tree = ast.parse(gen_code)
+
+    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    assert not any("New long string constant" in f["explanation"] for f in res["findings"])
+
+
+def test_check1_long_string_binary_blob_filtered(default_config):
+    """Pure hex/base64 blobs (ciphertext, binary data) must not trigger check_1."""
+    orig_code = "x = 'short'"
+    # ELF-header-like hex blob with both digits and letters
+    hex_blob = "7f454c460201010000" * 20  # 360 chars
+    gen_code = f"x = '{hex_blob}'"
+
+    orig_metrics = extract_metrics(orig_code)
+    gen_metrics = extract_metrics(gen_code)
+    orig_tree = ast.parse(orig_code)
+    gen_tree = ast.parse(gen_code)
+
+    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    assert not any("New long string constant" in f["explanation"] for f in res["findings"])
+
+
+def test_check1_long_string_packed_lookup_still_fires(default_config):
+    """Pipe-separated lookup tables (TRACE String-Concat-Abuse) must still fire.
+
+    Same structural pattern as the CAT_03 sample in benchmarks/structural_benchmark."""
+    orig_code = "x = 'short'"
+    table = (
+        "|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+        "thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+        "twenty|twenty-one|twenty-two|twenty-three|twenty-four|twenty-five|"
+        "twenty-six|twenty-seven|twenty-eight|twenty-nine|thirty"
+    )
+    assert len(table) > 200
+    gen_code = f"x = '{table}'"
+
+    orig_metrics = extract_metrics(orig_code)
+    gen_metrics = extract_metrics(gen_code)
+    orig_tree = ast.parse(orig_code)
+    gen_tree = ast.parse(gen_code)
+
+    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    assert any("New long string constant" in f["explanation"] for f in res["findings"])
+
 
 def test_check2_complexity_collapse(default_config):
     # Complexity 10
