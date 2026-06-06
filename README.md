@@ -41,24 +41,37 @@ Two modes:
 
 ## Key Results
 
-All results are fully reproducible. See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for full methodology, confusion matrices, and per-category breakdowns.
+See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for full methodology, confusion matrices, and per-category breakdowns.
 
-| Benchmark | Mode | Samples | Key Metric | Value |
-|-----------|------|---------|------------|-------|
-| Structural Benchmark (curated ground-truth pairs) | Pair | 36 | F1 | **100%** |
-| TRACE taxonomy (Deshpande et al. 2026) | Pair | 33 | F1 | **95.7%** |
-| School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** |
-| Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** |
-| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity† | **95.0%** |
-| MALT — `hardcoded_solution` | Standalone | 429 | Detection Rate | **46.9%** |
-| MALT — `bypass_constraints` | Standalone | 2,379 | Detection Rate | **34.5%** |
+### External datasets (independently labeled)
 
-† TNR measured on the `normal` label only (77,369 samples); see [RESULTS.md](benchmarks/RESULTS.md) for the full confusion matrix.
+Results on publicly released datasets with labels not authored by this project.
+
+| Dataset | Mode | Samples | Key Metric | Value | Run artifact |
+|---------|------|---------|------------|-------|--------------|
+| MALT (METR) — `normal` | Standalone | 77,369 | Specificity (TNR)† | **95.0%** | `malt_v2_2_0.json` ✓ |
+| MALT (METR) — `hardcoded_solution` | Standalone | 429 | Detection Rate | **46.9%** | `malt_v2_2_0.json` ✓ |
+| MALT (METR) — `bypass_constraints` | Standalone | 2,379 | Detection Rate | **34.5%** | `malt_v2_2_0.json` ✓ |
+| School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** | pending re-run ‡ |
+| Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** | pending re-run ‡ |
+
+† TNR on the `normal` label only (77,369 samples); see [RESULTS.md](benchmarks/RESULTS.md) for the full confusion matrix.  
+‡ Numbers reproduced from an earlier run; no snapshot JSON currently stored in `benchmarks/data/`. Re-run with `python -m benchmarks.run_benchmark --benchmark <name> --json results.json` to re-verify.
+
+### Hand-constructed built-in suite (regression / sanity checks, not external benchmarks)
+
+These samples were written by the project author to cover specific structural patterns. They are **not** independent external datasets — use them to confirm a check fires correctly, not as a claim about detection rates on real-world data.
+
+| Suite | Mode | Samples | Key Metric | Value | Notes |
+|-------|------|---------|------------|-------|-------|
+| Structural Benchmark | Pair | 36 | F1 | **100%** | Hand-curated pairs, one per structural pattern category |
+| TRACE-aligned built-in | Pair | 33 | F1 | **95.7%** | Hand-written pairs using TRACE category names — **not** the published TRACE dataset (Deshpande et al. 2026, 517 trajectories) |
 
 ### Comparison with Existing Approaches
 
 These approaches are complementary, not competing. ast-guard handles structural analysis; LLM reviewers handle semantics.
 
+<!-- NOTE: ast-guard version below is hardcoded. Update manually on each release. -->
 | Approach | Method | Cost/scan | Latency | Deterministic | Scope |
 |----------|--------|-----------|---------|---------------|-------|
 | GPT-4o reviewer | LLM-as-judge | $0.01–0.10 | 500–2000ms | No | Semantic + Structural |
@@ -117,7 +130,7 @@ elif result["verdict"] == "WARNING":
 
 # Standalone: single agent output, no baseline
 result = scan_standalone(agent_code)
-print(result["verdict"], result["checks"]["check_6_behavioral"]["risk_score"])
+print(result["verdict"], result["checks"]["check_6_behavioral"]["score"])
 ```
 
 ### CLI
@@ -252,7 +265,7 @@ multilang = "auto"   # "auto" | true | false
 ## Evaluation
 
 - [benchmarks/RESULTS.md](benchmarks/RESULTS.md) — precision, recall, F1, confusion matrices across all datasets.
-- [benchmarks/METHODOLOGY.md](benchmarks/METHODOLOGY.md) — the 6-iteration calibration history, including regressions.
+- [benchmarks/METHODOLOGY.md](benchmarks/METHODOLOGY.md) — the 13-iteration calibration history, including regressions.
 - [benchmarks/structural_benchmark/](benchmarks/structural_benchmark/) — 36 curated ground-truth pairs across 12 structural hack categories.
 
 Reproduce:
@@ -272,7 +285,7 @@ python -m benchmarks.run_benchmark --benchmark malt --mode strict
 - **MALT** (METR 2025) — 10,919 manually reviewed agent transcripts, 81,515 extracted code blocks. The largest labeled dataset in the field.
 - **Helff et al.** ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)) — Extensional enumeration shortcuts in RLVR-trained models. Directly motivates Check 5.
 - **RewardHackWatch** — Runtime detector combining ML + regex + AST. ast-guard is its deterministic structural complement.
-- **EvilGenie** — Inference-time LLM reviewer; one of ast-guard's benchmark loaders.
+- **EvilGenie** — Inference-time LLM reviewer. A loader scaffold is present in ast-guard (`benchmarks/loaders/evilgenie.py`) but has not been validated against real data — EvilGenie is a live-harness benchmark with no static data release, so field names are guessed.
 - **ZeroFalse** ([arXiv:2510.02534](https://arxiv.org/abs/2510.02534)) — Calibrated confidence levels for static-analysis findings. Motivates ast-guard's confidence-score module (`ast_guard/confidence.py`).
 
 ---
