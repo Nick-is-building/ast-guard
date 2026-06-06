@@ -251,6 +251,38 @@ def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
                             f"{int(complexity_rel_decrease * 100)}%."
                         )
                     })
+        else:
+            # Partial-rename / dropped-function guard: when some names are shared
+            # but others are not, the per-function loop above only covers common
+            # names. An LLM can keep one function name intact while renaming or
+            # deleting all other complex functions to bypass the per-name check.
+            # Here we compare the total complexity of unmatched original functions
+            # against the total complexity of unmatched generated functions.
+            dropped_names = sorted(set(orig_funcs.keys()) - set(gen_funcs.keys()))
+            new_names = sorted(set(gen_funcs.keys()) - set(orig_funcs.keys()))
+            if dropped_names:
+                dropped_complexity = sum(orig_funcs[n] for n in dropped_names)
+                new_complexity = sum(gen_funcs[n] for n in new_names)
+                if dropped_complexity >= complexity_abs_min and dropped_complexity > 0:
+                    pct_decrease = (dropped_complexity - new_complexity) / dropped_complexity
+                    if pct_decrease > complexity_rel_decrease:
+                        dropped_str = ", ".join(f"'{n}'" for n in dropped_names)
+                        new_str = (
+                            ", ".join(f"'{n}'" for n in new_names)
+                            if new_names else "none"
+                        )
+                        findings.append({
+                            "severity": "WARNING",
+                            "line": None,
+                            "explanation": (
+                                f"Function(s) {dropped_str} present in the original have no "
+                                f"matching name in the generated code. Their combined complexity "
+                                f"({dropped_complexity}) dropped by {int(pct_decrease * 100)}% "
+                                f"relative to replacement function(s) [{new_str}] "
+                                f"(combined complexity: {new_complexity}), exceeding the limit "
+                                f"of {int(complexity_rel_decrease * 100)}%."
+                            )
+                        })
 
     status = "WARNING" if findings else "CLEAN"
     return {

@@ -315,6 +315,29 @@ def count_enumeration_pattern(tree):
                     return True
         return False
 
+    def _is_literal_match_pattern(pat) -> bool:
+        """True when a match_case pattern is a constant literal (not a wildcard, capture, or guard)."""
+        if isinstance(pat, ast.MatchValue):
+            return isinstance(pat.value, ast.Constant)
+        if isinstance(pat, ast.MatchSingleton):
+            # case True: / case False: / case None:
+            return True
+        if isinstance(pat, ast.MatchOr):
+            return all(_is_literal_match_pattern(p) for p in pat.patterns)
+        return False
+
+    def _is_enumeration_match_case(case_node) -> bool:
+        """True when a match_case is a literal-constant enumeration branch with trivial body.
+
+        Guards (``case x if cond:``) and wildcards/captures (``case _:``, ``case x:``)
+        are excluded — they are not input/output pair enumeration.
+        """
+        if case_node.guard is not None:
+            return False
+        if not _is_literal_match_pattern(case_node.pattern):
+            return False
+        return len(case_node.body) <= 2
+
     def _is_enum_ifexp(ifexp_node):
         if not isinstance(ifexp_node.test, ast.Compare):
             return False
@@ -364,7 +387,7 @@ def count_enumeration_pattern(tree):
                 loop_count += 1
             elif hasattr(ast, 'match_case') and isinstance(node, ast.match_case):
                 total_ifs += 1
-                if len(node.body) <= 2:
+                if _is_enumeration_match_case(node):
                     enumeration_ifs += 1
 
             for child in ast.iter_child_nodes(node):

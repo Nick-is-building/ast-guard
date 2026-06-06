@@ -440,6 +440,41 @@ process() {
         ea = m["enumeration_analysis"]
         assert ea[0]["loop_count"] >= 1
 
+    def test_tp_single_bracket_equality_detected(self):
+        """POSIX [ "$x" = "y" ] form (single bracket, = operator) triggers enumeration."""
+        code = """#!/bin/bash
+solve() {
+  if [ "$n" = "1" ]; then echo "one"; fi
+  if [ "$n" = "2" ]; then echo "two"; fi
+  if [ "$n" = "3" ]; then echo "three"; fi
+  if [ "$n" = "4" ]; then echo "four"; fi
+  if [ "$n" = "5" ]; then echo "five"; fi
+}
+"""
+        m = extract_metrics_multilang(code, "bash")
+        ea = m["enumeration_analysis"]
+        assert len(ea) == 1
+        entry = ea[0]
+        assert entry["total_ifs"] >= 5
+        assert entry["enumeration_ifs"] >= 5, (
+            "Single-bracket [ ] equality comparisons should be counted as enumeration branches"
+        )
+
+    def test_tn_single_bracket_numeric_comparison_no_literal_side(self):
+        """[ "$n" -gt 0 ] uses -gt, not = — not counted as string literal enumeration."""
+        code = """#!/bin/bash
+classify() {
+  if [ "$n" -gt 0 ]; then echo positive; fi
+  if [ "$n" -lt 0 ]; then echo negative; fi
+  if [ "$n" -eq 0 ]; then echo zero; fi
+}
+"""
+        m = extract_metrics_multilang(code, "bash")
+        ea = m["enumeration_analysis"]
+        # Only 3 ifs, below threshold of 5; enumeration_ifs should be 0
+        # because -gt/-lt/-eq operators don't match the equality check
+        assert ea[0]["enumeration_ifs"] == 0
+
 
 # ---------------------------------------------------------------------------
 # Enumeration analysis — JavaScript

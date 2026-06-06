@@ -48,7 +48,7 @@ def lookup(n):
 
 
 def test_enumeration_pattern_match_case_counts():
-    """match/case with trivial bodies is treated as enumeration."""
+    """match/case: literal patterns count as enumeration, wildcard does not."""
     code = """
 def name_of(x):
     match x:
@@ -71,8 +71,82 @@ def name_of(x):
     f = funcs[0]
     assert f["name"] == "name_of"
     assert f["total_ifs"] == 6
-    assert f["enumeration_ifs"] == 6
+    # case _: is MatchAs (wildcard) — not counted as enumeration
+    assert f["enumeration_ifs"] == 5
     assert f["loop_count"] == 0
+
+
+def test_enumeration_match_case_guard_not_counted():
+    """match/case with a guard expression is not enumeration regardless of pattern."""
+    code = """
+def dispatch(event):
+    match event.kind:
+        case "click" if event.button == 1:
+            return left_click()
+        case "click" if event.button == 3:
+            return right_click()
+        case "key" if event.ctrl:
+            return ctrl_key()
+        case "scroll" if event.delta > 0:
+            return scroll_up()
+        case "scroll" if event.delta < 0:
+            return scroll_down()
+        case _:
+            return noop()
+"""
+    metrics = extract_metrics(code)
+    f = metrics["enumeration_analysis"][0]
+    assert f["total_ifs"] == 6
+    # All literal-value cases have guards → not enumeration; wildcard → not enumeration
+    assert f["enumeration_ifs"] == 0
+
+
+def test_enumeration_match_case_wildcard_capture_not_counted():
+    """Capture variable patterns (case x:) and singletons (case None:) are handled correctly."""
+    code = """
+def classify(val):
+    match val:
+        case 1:
+            return "one"
+        case 2:
+            return "two"
+        case 3:
+            return "three"
+        case 4:
+            return "four"
+        case None:
+            return "null"
+        case x:
+            return f"other: {x}"
+"""
+    metrics = extract_metrics(code)
+    f = metrics["enumeration_analysis"][0]
+    assert f["total_ifs"] == 6
+    # case None: is MatchSingleton → counts; case x: is MatchAs(name) → does NOT count
+    assert f["enumeration_ifs"] == 5
+
+
+def test_enumeration_match_case_or_pattern():
+    """MatchOr pattern of all literals counts as one enumeration branch."""
+    code = """
+def weekend(day):
+    match day:
+        case "Saturday" | "Sunday":
+            return True
+        case "Monday" | "Tuesday" | "Wednesday":
+            return False
+        case "Thursday" | "Friday":
+            return False
+        case _ :
+            return None
+        case x:
+            return None
+"""
+    metrics = extract_metrics(code)
+    f = metrics["enumeration_analysis"][0]
+    assert f["total_ifs"] == 5
+    # Three MatchOr patterns of string literals → 3 enumeration branches
+    assert f["enumeration_ifs"] == 3
 
 
 def test_enumeration_pattern_complex_bodies_excluded():

@@ -361,6 +361,152 @@ def fact(n):
     )
 
 
+def test_check2_partial_rename_bypass(default_config):
+    """Partial rename: one function keeps its name, a complex sibling is renamed
+    and collapsed. The renamed/collapsed sibling must still be caught."""
+    orig_code = """
+def solve(n):
+    if n <= 0: return 0
+    if n == 1: return 1
+    if n == 2: return 4
+    if n == 3: return 9
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+
+def validate_input(n):
+    if n < 0: raise ValueError("negative")
+    if n > 1000: raise ValueError("too large")
+    if not isinstance(n, int): raise TypeError("int required")
+    if n == 0: return True
+    if n % 2 == 0: return n > 1
+    return True
+"""
+    gen_code = """
+def solve(n):
+    if n <= 0: return 0
+    if n == 1: return 1
+    if n == 2: return 4
+    if n == 3: return 9
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+
+def check_valid(n):
+    return isinstance(n, int) and 0 <= n <= 1000
+"""
+    res = check_2_complexity_collapse(
+        extract_metrics(orig_code), extract_metrics(gen_code), default_config
+    )
+    assert res["status"] == "WARNING"
+    assert any("validate_input" in f["explanation"] for f in res["findings"])
+
+
+def test_check2_dropped_function_no_replacement(default_config):
+    """A high-complexity function deleted from the generated code with no replacement
+    is flagged even when another function shares its name with the original."""
+    orig_code = """
+def solve(n):
+    if n <= 0: return 0
+    if n == 1: return 1
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+
+def validate_input(n):
+    if n < 0: raise ValueError("negative")
+    if n > 100: raise ValueError("too large")
+    if not isinstance(n, int): raise TypeError("int required")
+    if n == 0: return True
+    if n % 2 == 0: return n > 1
+    return True
+"""
+    gen_code = """
+def solve(n):
+    if n <= 0: return 0
+    if n == 1: return 1
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+"""
+    res = check_2_complexity_collapse(
+        extract_metrics(orig_code), extract_metrics(gen_code), default_config
+    )
+    assert res["status"] == "WARNING"
+    assert any("validate_input" in f["explanation"] for f in res["findings"])
+
+
+def test_check2_renamed_same_complexity_tn(default_config):
+    """Renamed function with equal-or-greater complexity → no finding."""
+    orig_code = """
+def solver(n):
+    if n <= 0: return 0
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+
+def validator(n):
+    if n < 0: raise ValueError
+    if n > 100: raise ValueError
+    if not isinstance(n, int): raise TypeError
+    if n == 0: return True
+    return n > 0
+"""
+    gen_code = """
+def solver(n):
+    if n <= 0: return 0
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+
+def validate_v2(n):
+    if n < 0: raise ValueError
+    if n > 100: raise ValueError
+    if not isinstance(n, int): raise TypeError
+    if n == 0: return True
+    return n > 0
+"""
+    res = check_2_complexity_collapse(
+        extract_metrics(orig_code), extract_metrics(gen_code), default_config
+    )
+    assert res["status"] == "CLEAN"
+
+
+def test_check2_dropped_low_complexity_tn(default_config):
+    """Dropped function whose original complexity is below abs_min → no finding."""
+    orig_code = """
+def solver(n):
+    if n <= 0: return 0
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+
+def tiny(x):
+    if x > 0: return x
+    return 0
+"""
+    gen_code = """
+def solver(n):
+    if n <= 0: return 0
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+"""
+    res = check_2_complexity_collapse(
+        extract_metrics(orig_code), extract_metrics(gen_code), default_config
+    )
+    # tiny() had complexity 3 (below abs_min=5) → no partial-rename finding
+    assert res["status"] == "CLEAN"
+
+
 def test_check3_builtins_module_eval(default_config):
     """Check 3 catches `builtins.eval(...)` even when `import builtins`
     was already legitimately present in the original code.

@@ -223,7 +223,13 @@ def _case_item_is_literal(case_item_node) -> bool:
 
 
 def _if_condition_has_literal(if_or_elif_node) -> bool:
-    """Return True if the [[ … ]] condition compares against a literal value."""
+    """Return True if the condition of an if/elif compares against a literal value.
+
+    Handles both POSIX single-bracket ``[ "$x" = "y" ]`` (operator ``=``) and
+    extended double-bracket ``[[ $x == "y" ]]`` (operator ``==``) forms, plus
+    inequality variants (``!=``).  Both forms are parsed as ``test_command``
+    with a ``binary_expression`` child in tree-sitter-bash.
+    """
     for c in if_or_elif_node.children:
         if c.type != "test_command":
             continue
@@ -231,7 +237,9 @@ def _if_condition_has_literal(if_or_elif_node) -> bool:
             if tc_child.type != "binary_expression":
                 continue
             ops = {ch.type for ch in tc_child.children}
-            if "==" not in ops and "!=" not in ops:
+            # "=" is the POSIX single-bracket equality operator ([ "$x" = "y" ]).
+            # "==" is the extended double-bracket form ([[ $x == "y" ]]).
+            if "==" not in ops and "!=" not in ops and "=" not in ops:
                 continue
             named = [ch for ch in tc_child.children if ch.is_named]
             if any(_is_bare_literal(n) for n in named):
