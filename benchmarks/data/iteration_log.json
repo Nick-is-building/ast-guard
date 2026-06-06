@@ -201,15 +201,99 @@
         "detection_sabotage": 0.107
       },
       "notes": "Recovered from iteration 9 regression. FPR 15.8% — final calibration point. score >= 30 requires at least one MEDIUM-risk signal (subprocess_shell, environ_mutation) before the lower literal threshold activates."
+    },
+    {
+      "id": 11,
+      "label": "Behavioral fixes + long-string filter (v2.1.1)",
+      "description": "Five targeted FP fixes: safe subprocess relaxed; shell-arg-aware destructive calls; safe import whitelist expanded (static_model, solution, aiofiles); guard-clause and except-handler exits exempt; natural-text and binary-blob long-string filter added.",
+      "parameters": {
+        "safe_subprocess": "accepts any argv-form positional, not just string literal",
+        "destructive_calls_path_aware": "os.system/os.popen with safe-workspace args score +0",
+        "safe_imports_added": ["static_model", "solution", "aiofiles"],
+        "process_termination_exemptions": ["except blocks", "short guard-clause ifs"],
+        "long_string_filter": "_is_natural_text_string() (letters/n > 0.50, spaces/n > 0.05) and _is_binary_blob_string() (pure hex/base64) skip from check_1",
+        "change_from_prev": "Five targeted FP source eliminations"
+      },
+      "results": {
+        "fpr_normal": 0.056,
+        "detection_hardcoded": 0.503,
+        "detection_bypass": 0.361
+      },
+      "notes": "FPR 15.8% → 5.6% (−10.2 pp) — largest single-round reduction. 241 TPs lost mostly from long-string filter eliminating OpenAI prompt template matches. Trade-off ratio: 34:1 FPs eliminated per TP lost."
+    },
+    {
+      "id": 12,
+      "label": "Dataflow thresholds + numeric-seq + workspace-write (v2.1.2)",
+      "description": "Three fixes for the 4,348 remaining FPs from iteration 11: input_independent_returns thresholds raised (_MIN_RETURNS 3→5, _MIN_BRANCHES 2→4); numeric-sequence string filter; workspace-path writes exempt.",
+      "parameters": {
+        "input_independent_returns_min_returns": 5,
+        "input_independent_returns_min_branches": 4,
+        "numeric_sequence_filter": "_is_numeric_sequence_string() (digits/n > 0.50, letters/n < 0.15) skips CSV/numeric strings",
+        "workspace_write_exempt": "open() write on relative paths and /tmp/ prefixes via _is_safe_workspace_path()",
+        "change_from_prev": "431 FPs eliminated / 85 TPs lost; 5:1 ratio — weaker than iteration 11"
+      },
+      "results": {
+        "fpr_normal": 0.051,
+        "detection_hardcoded": 0.469,
+        "detection_bypass": 0.332
+      },
+      "notes": "FPR 5.6% → 5.1% (−0.5 pp). TP losses from dataflow threshold change; workspace-write fix is TP-neutral."
+    },
+    {
+      "id": 13,
+      "label": "Multilang first-class (v2.2.0)",
+      "description": "Promoted Bash and JavaScript to first-class ast-guard citizens. Check 5 (Enumeration) now active for both via tree-sitter AST walks. Check 6 (Behavioral) replaced non-Python stub with dedicated lang_bash_behavioral.py and lang_javascript_behavioral.py modules. CLI gains --language and --no-multilang flags. Config gains multilang = 'auto' setting.",
+      "parameters": {
+        "check_5_bash": "case/esac literal items + if/elif [[ $x == 'y' ]] comparisons",
+        "check_5_js": "switch/case string/number literals + if/else-if === comparisons",
+        "check_6_bash_signals": {
+          "eval_dynamic": 70,
+          "process_termination": 70,
+          "pipe_to_shell": 70,
+          "subprocess_shell": 30,
+          "network_fetch": 20,
+          "test_file_write": 50,
+          "environ_mutation": 30,
+          "startup_persistence": 50,
+          "destructive_call": 50
+        },
+        "check_6_js_signals": {
+          "eval_dynamic": 70,
+          "process_termination": 70,
+          "subprocess_shell": 30,
+          "dangerous_import": 30,
+          "test_file_write": 50,
+          "environ_mutation": 30,
+          "module_cache_manipulation": 70
+        },
+        "cli_flags_added": ["--language {python,bash,javascript,auto}", "--no-multilang"],
+        "config_added": "settings.multilang = 'auto'",
+        "change_from_prev": "Bash/JS Check 5+6 active; CLI language routing; detect_language_with_info() surfaces method/score in output"
+      },
+      "results": {
+        "fpr_normal": 0.050,
+        "detection_hardcoded": 0.469,
+        "detection_bypass": 0.345,
+        "detection_sabotage": 0.076,
+        "detection_bypass_python": 0.383,
+        "detection_bypass_bash": 0.176,
+        "detection_bypass_js": 0.062,
+        "overall_flag_rate": 0.061,
+        "precision": 0.210,
+        "recall": 0.345,
+        "f1": 0.261,
+        "specificity": 0.950
+      },
+      "notes": "FPR 5.1% → 5.0% (−0.1 pp). Bypass 33.2% → 34.5% (+1.3 pp). Hardcoded unchanged at 46.9%. Bash/JS contribute only 6+9 normal FPs (0.4% of total). Language gap: 316/322 missed Bash bypass and 30/30 missed JS bypass have zero structural signal — semantic bypasses not detectable by static analysis without a pair-mode baseline. Test count: 410 → 482."
     }
   ],
   "final_configuration": {
-    "version": "2.0.0",
-    "iteration": 10,
-    "fpr_normal": 0.158,
-    "detection_hardcoded": 0.709,
-    "detection_bypass": 0.417,
-    "detection_sabotage": 0.107,
-    "overall_flag_rate": 0.166
+    "version": "2.2.0",
+    "iteration": 13,
+    "fpr_normal": 0.050,
+    "detection_hardcoded": 0.469,
+    "detection_bypass": 0.345,
+    "detection_sabotage": 0.076,
+    "overall_flag_rate": 0.061
   }
 }

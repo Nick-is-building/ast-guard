@@ -49,9 +49,9 @@ All results are fully reproducible. See [benchmarks/RESULTS.md](benchmarks/RESUL
 | TRACE taxonomy (Deshpande et al. 2026) | Pair | 33 | F1 | **95.7%** |
 | School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** |
 | Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** |
-| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity† | **94.9%** |
+| MALT (METR, 81,515 agent code blocks) | Standalone | 81,515 | Specificity† | **95.0%** |
 | MALT — `hardcoded_solution` | Standalone | 429 | Detection Rate | **46.9%** |
-| MALT — `bypass_constraints` | Standalone | 2,379 | Detection Rate | **33.2%** |
+| MALT — `bypass_constraints` | Standalone | 2,379 | Detection Rate | **34.5%** |
 
 † TNR measured on the `normal` label only (77,369 samples); see [RESULTS.md](benchmarks/RESULTS.md) for the full confusion matrix.
 
@@ -63,7 +63,7 @@ These approaches are complementary, not competing. ast-guard handles structural 
 |----------|--------|-----------|---------|---------------|-------|
 | GPT-4o reviewer | LLM-as-judge | $0.01–0.10 | 500–2000ms | No | Semantic + Structural |
 | RewardHackWatch | ML + Regex + AST | GPU required | varies | No | Trajectory-level |
-| **ast-guard v2.1.2** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
+| **ast-guard v2.2.0** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
 
 ---
 
@@ -126,6 +126,12 @@ print(result["verdict"], result["checks"]["check_6_behavioral"]["risk_score"])
 python -m ast_guard.cli check original.py generated.py            # standard
 python -m ast_guard.cli check original.py generated.py --mode strict
 python -m ast_guard.cli check original.py generated.py --json     # for pipelines
+
+# Multi-language: auto-detect or specify explicitly
+python -m ast_guard.cli check original.sh generated.sh --language bash
+python -m ast_guard.cli check original.js generated.js --language javascript
+python -m ast_guard.cli check original.py generated.py --language auto   # default
+python -m ast_guard.cli check original.py generated.py --no-multilang    # Python-only
 ```
 
 Exit code 0 on CLEAN/WARNING, exit code 1 on CRITICAL — drop-in for CI gates.
@@ -140,13 +146,21 @@ Python is native (zero deps). Bash and JavaScript are available via tree-sitter 
 pip install ast-guard[multilang]
 ```
 
-| Language | Backend | Detects |
-|----------|---------|---------|
-| Python | Native `ast` | All 6 checks |
-| Bash | tree-sitter-bash | Dangerous calls (curl, wget, eval, rm, chmod), PATH manipulation, LD_PRELOAD |
-| JavaScript | tree-sitter-javascript | eval, Function(), require('child_process'), execSync |
+| Language | Backend | Checks active |
+|----------|---------|--------------|
+| Python | Native `ast` | 1, 2, 3, 4, 5, 6 |
+| Bash | tree-sitter-bash | 1, 3, 4, 5, 6 |
+| JavaScript | tree-sitter-javascript | 1, 3, 4, 5, 6 |
 
-Bash and JS adapters are preview-quality: narrower pattern coverage than the Python core.
+All three languages run the same 6-check pipeline. Check 2 (Complexity Collapse) requires a pair-mode baseline and is inactive in standalone mode for all languages. Language is auto-detected from the generated file (shebang-first, then keyword scoring) or can be set explicitly with `--language`.
+
+**Check 5 (Extensional Enumeration) for Bash:** detects `case/esac` statements with literal branch values and `if/elif` with `[[ $x == "y" ]]`-style comparisons.
+
+**Check 6 (Behavioral Risk Scoring) for Bash:** eval_dynamic, pipe_to_shell, process_termination, subprocess_shell, network_fetch, test_file_write, environ_mutation, startup_persistence, destructive_call.
+
+**Check 5 for JavaScript:** detects `switch/case` with string/number literals and `if/else-if` with `===`/`==` comparisons.
+
+**Check 6 for JavaScript:** eval_dynamic (including `Function()` constructor), process_termination, subprocess_shell, dangerous_import (child_process), test_file_write, environ_mutation, module_cache_manipulation (require.cache).
 
 ---
 
@@ -210,6 +224,7 @@ allowlist = ["functools", "itertools", "collections", "math"]
 [settings]
 mode = "standard"
 telemetry = false
+multilang = "auto"   # "auto" | true | false
 ```
 
 ---
@@ -227,9 +242,9 @@ telemetry = false
 
 ## Known Limitations
 
-- **Standalone precision is lower than pair mode** by design. Without a baseline, contextual disambiguation is harder. The MALT false-positive rate on `normal` samples (5.1% at v2.1.2) is the current calibration point — intentionally conservative.
+- **Standalone precision is lower than pair mode** by design. Without a baseline, contextual disambiguation is harder. The MALT false-positive rate on `normal` samples (5.0% at v2.2.0) is the current calibration point — intentionally conservative.
 - **Semantic hacks are outside scope.** Code that is structurally normal but logically wrong, or that games a task specification without a structural trace, requires semantic understanding. That is the job of LLM-based reviewers and downstream test suites.
-- **Bash and JavaScript adapters are less mature than the Python core.** Pattern coverage is narrower; false-positive calibration is less refined.
+- **Bash and JavaScript bypass detection ceiling in standalone mode.** In MALT, 316/322 missed Bash bypass samples and 30/30 missed JS bypass samples show zero structural signal — they are semantically encoded (silent failure, wrong logic), not structurally encoded. Pair mode (with original code) would provide additional signal via Check 2 and Check 1.
 - **Thresholds are empirically calibrated.** Defaults are informed starting points, not final optima. See [METHODOLOGY.md](benchmarks/METHODOLOGY.md) for the full iteration history.
 
 ---
@@ -270,7 +285,7 @@ python -m benchmarks.run_benchmark --benchmark malt --mode strict
   author = {Nick},
   year   = {2026},
   url    = {https://github.com/Nick-is-building/ast-guard},
-  version = {2.1.2}
+  version = {2.2.0}
 }
 ```
 

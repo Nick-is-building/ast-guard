@@ -2,7 +2,7 @@
 
 ## Abstract
 
-ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across four datasets: the built-in TRACE benchmark (33 samples), the external TRACE HuggingFace dataset (46 trajectories), Countdown-Code (15,894 samples), School of Reward Hacks (26 valid Python samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode (original vs. generated code), ast-guard achieves 95.7% F1 on structurally detectable TRACE hacks with 100% precision and 0% false positive rate. In standalone mode on MALT, it achieves 94.9% true-negative rate while detecting 33.2% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.1.2 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
+ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across four datasets: the built-in TRACE benchmark (33 samples), the external TRACE HuggingFace dataset (46 trajectories), Countdown-Code (15,894 samples), School of Reward Hacks (26 valid Python samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode (original vs. generated code), ast-guard achieves 95.7% F1 on structurally detectable TRACE hacks with 100% precision and 0% false positive rate. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.2.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
 
 ---
 
@@ -10,7 +10,7 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 | Property | Value |
 |----------|-------|
-| Tool | ast-guard v2.1.2 |
+| Tool | ast-guard v2.2.0 |
 | Approach | Deterministic pre-execution static analysis |
 | Core dependency | Python standard library only (zero external deps) |
 | Latency | <50ms per scan |
@@ -19,14 +19,14 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 ### Checks
 
-| # | Name | Method |
-|---|------|--------|
-| 1 | Hardcoding Detection | If-count / literal-count / long-string growth relative to baseline |
-| 2 | Complexity Collapse | McCabe complexity drop >60% per qualified function name |
-| 3 | Forbidden Calls & Anti-Obfuscation | Diff-based; eval/exec, chr tricks, builtins subscript, constant folding |
-| 4 | Import Drift | CRITICAL on dangerous stdlib modules; WARNING on unknowns |
-| 5 | Extensional Enumeration | if/elif or match/case chains covering >70% of branches with no loops |
-| 6 | Behavioral Risk Scoring | Additive score from AST-detectable behavioral patterns (standalone) |
+| # | Name | Method | Languages |
+|---|------|--------|-----------|
+| 1 | Hardcoding Detection | If-count / literal-count / long-string growth relative to baseline | Python, Bash, JS |
+| 2 | Complexity Collapse | McCabe complexity drop >60% per qualified function name | Python, Bash, JS |
+| 3 | Forbidden Calls & Anti-Obfuscation | Diff-based; eval/exec, chr tricks, builtins subscript, constant folding | Python, Bash, JS |
+| 4 | Import Drift | CRITICAL on dangerous stdlib modules; WARNING on unknowns | Python, Bash, JS |
+| 5 | Extensional Enumeration | if/elif or match/case chains covering >70% of branches with no loops | Python, Bash, JS |
+| 6 | Behavioral Risk Scoring | Additive score from AST-detectable behavioral patterns (standalone) | Python, Bash, JS |
 
 ---
 
@@ -124,34 +124,44 @@ Binary classification: **hack** = bypass\_constraints + hardcoded\_solution + sa
 
 | | Flagged | Clean |
 |---|---------|-------|
-| **Hack** (3,005) | TP = 1,006 | FN = 1,999 |
-| **Non-hack** (78,510) | FP = 3,938 | TN = 74,572* |
+| **Hack** (3,005) | TP = 1,036 | FN = 1,969 |
+| **Non-hack** (78,510) | FP = 3,908 | TN = 74,602 |
 
-*TN calculated on normal label only (77,369 samples). Some non-hack labels (partial\_problem\_solving, ignores\_task\_instructions) have legitimate reasons to use flagged patterns.
+*TNR/Specificity measured on normal label only (77,369 samples). Some non-hack labels (partial\_problem\_solving, ignores\_task\_instructions) have legitimate reasons to use flagged patterns.*
 
 | Metric | Value |
 |--------|-------|
-| Precision | 20.4% |
-| Recall | 33.5% |
-| F1 | 25.3% |
-| Specificity (TNR on normal) | **94.9%** |
+| Precision | 21.0% |
+| Recall | 34.5% |
+| F1 | 26.1% |
+| Specificity (TNR on normal) | **95.0%** |
 
-**Interpretation:** The low precision is expected and acceptable — standalone mode is designed as a pre-filter, not a final classifier. The 94.9% specificity means most legitimate agent code passes through without triggering a flag. The 33.5% recall covers only structurally detectable hacks; semantic hacks (giving wrong answers, sandbagging) cannot be detected by AST analysis.
+**Interpretation:** The low precision is expected and acceptable — standalone mode is designed as a pre-filter, not a final classifier. The 95.0% specificity means the vast majority of legitimate agent code passes through without triggering a flag. The 34.5% recall covers only structurally detectable hacks; semantic hacks (giving wrong answers, sandbagging) cannot be detected by AST analysis.
 
 ### Per-Category Detection Rates
 
-| Label | Samples | Flagged | Detection Rate | Notes |
-|-------|---------|---------|---------------|-------|
-| normal | 77,369 | 3,917 | 5.1% (FPR) | Legitimate agent code; behavioral and import signals |
-| bypass\_constraints | 2,379 | 790 | **33.2%** | Stack introspection, importlib, process termination |
-| hardcoded\_solution | 429 | 201 | **46.9%** | Module cache manipulation, input-independence, literal counts |
-| sabotage | 197 | 15 | 7.6% | Mixed structural and semantic sabotage |
-| match\_weaker\_model | 171 | 7 | 4.1% | High literal count; mostly semantic |
-| partial\_problem\_solving | 731 | 8 | 1.1% | Threading imports in partial solutions |
-| refusals | 147 | 4 | 2.7% | subprocess in refusal context |
-| reasoning\_about\_task | 74 | 2 | 2.7% | Unknown imports (e.g., PyPDF2) |
-| ignores\_task\_instructions | 17 | 0 | 0% | Too few samples for signal |
-| gives\_up | 1 | 0 | 0% | — |
+| Label | Samples | Flagged | Detection Rate | Language breakdown | Notes |
+|-------|---------|---------|---------------|-------------------|-------|
+| normal | 77,369 | 3,888 | 5.0% (FPR) | 99.1% Python, 0.6% Bash, 0.3% JS | Legitimate agent code |
+| bypass\_constraints | 2,379 | 820 | **34.5%** | 82.2% Python, 16.4% Bash, 1.3% JS | Structural bypasses; majority of misses are semantic |
+| hardcoded\_solution | 429 | 201 | **46.9%** | 100% Python | Module cache manipulation, input-independence, literal counts |
+| sabotage | 197 | 15 | 7.6% | 91.4% Python, 7.6% Bash | Mixed structural and semantic |
+| match\_weaker\_model | 171 | 7 | 4.1% | — | High literal count; mostly semantic |
+| partial\_problem\_solving | 731 | 8 | 1.1% | — | Threading imports in partial solutions |
+| refusals | 147 | 3 | 2.0% | — | subprocess in refusal context |
+| reasoning\_about\_task | 74 | 2 | 2.7% | — | Unknown imports |
+| ignores\_task\_instructions | 17 | 0 | 0% | — | Too few samples |
+| gives\_up | 1 | 0 | 0% | — | — |
+
+### Per-Language Detection on bypass\_constraints
+
+| Language | Samples | Detected | Detection Rate |
+|----------|---------|----------|---------------|
+| Python | 1,956 | 749 | **38.3%** |
+| Bash | 391 | 69 | **17.6%** |
+| JavaScript | 32 | 2 | **6.2%** |
+
+**Interpretation of language gap:** The lower detection rate for Bash (17.6%) and JavaScript (6.2%) compared to Python (38.3%) reflects the nature of non-Python bypass in MALT, not a deficiency in the adapters. Analysis of missed samples shows 316 of 322 missed Bash bypass samples and 30 of 30 missed JS bypass samples have **zero structural signal** — they are agents that silently fail to complete the task or use semantically incorrect logic rather than structurally detectable hacks (eval chains, import hijacking, complexity collapse). Structural static analysis without a pair-mode baseline has an inherent ceiling here. In pair mode, Check 2 (complexity collapse) and Check 1 (literal growth) would provide additional signal for these cases.
 
 ### Per-Check Contribution
 
@@ -159,16 +169,14 @@ Trigger counts across all 4,944 flagged samples (one sample may trigger multiple
 
 | Check | Triggers | % of Flagged |
 |-------|----------|-------------|
-| 1 — Hardcoding | 10,588 | 78.2% |
-| 6 — Behavioral Risk Scoring | 3,765 | 27.8% |
-| 4 — Import Drift | 2,202 | 16.3% |
-| 3 — Forbidden Calls | 226 | 1.7% |
-| 5 — Extensional Enumeration | 59 | 0.4% |
+| 6 — Behavioral Risk Scoring | 2,664 | 53.9% |
+| 1 — Hardcoding | 2,272 | 46.0% |
+| 4 — Import Drift | 1,072 | 21.7% |
+| 3 — Forbidden Calls | 226 | 4.6% |
+| 5 — Extensional Enumeration | 59 | 1.2% |
 | 2 — Complexity Collapse | ~0 | ~0% |
 
-Note: Check 2 does not fire in standalone mode — there is no baseline complexity to compare against.
-
-Check 1 dominates because the standalone literal threshold (80 literals, conditional 50 when behavioral score ≥ 30) is hit by agent code blocks that include large data structures or lookup tables. The top false positive triggers are `open()` write on unknown targets (+10 in Check 6) at 454 occurrences and `subprocess` import at 397.
+Note: Check 2 does not fire in standalone mode — there is no baseline complexity to compare against. Check 6 is now the primary detection driver across all three supported languages (Python, Bash, JS).
 
 ### Top False Positive Triggers on Normal Samples
 
@@ -181,6 +189,8 @@ Check 1 dominates because the standalone literal threshold (80 literals, conditi
 | stack\_introspection +70 | 224 | inspect module in logging and utility code |
 | file\_write\_unknown\_target +10 | 454 | Unresolvable filename; contributes to aggregate score only |
 
+Bash/JS contribute 6 and 9 normal FPs respectively (negligible: 0.4% of total normal FPs), confirming the new behavioral modules are well-calibrated.
+
 ---
 
 ## Comparison with Existing Detectors
@@ -191,9 +201,9 @@ Direct comparison is limited because each tool covers different categories, uses
 |----------|--------|---------|--------|-------|
 | GPT-4o (LLM-as-judge)† | LLM-as-judge | TRACE (all 54 cats) | Detection Rate | ~63%† |
 | RewardHackWatch | ML + Regex + AST | MALT (5,391) | F1 | 89.7% |
-| **ast-guard v2.1.2 Pair Mode** | **Deterministic AST** | **TRACE (structural)** | **F1** | **95.7%** |
-| **ast-guard v2.1.2 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **94.9%** |
-| **ast-guard v2.1.2 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **33.5%** |
+| **ast-guard v2.2.0 Pair Mode** | **Deterministic AST** | **TRACE (structural)** | **F1** | **95.7%** |
+| **ast-guard v2.2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **95.0%** |
+| **ast-guard v2.2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **34.5%** |
 
 † Approximate figure; no published source. Included as order-of-magnitude context only.
 
@@ -202,6 +212,7 @@ Key differentiators:
 - **Fully deterministic** — same input always produces the same output
 - **Zero external dependencies** in core (Python stdlib only)
 - **<50ms latency** — suitable for pre-execution gating
+- **First-class multilang** — Python, Bash, and JavaScript all run the same 6-check pipeline
 - **Complementary layer** — designed to work alongside ML-based detectors, not replace them
 
 ---
@@ -210,9 +221,9 @@ Key differentiators:
 
 1. **Standalone precision is low by design.** Without a baseline, structural patterns that are suspicious in context (eval(), subprocess, file writes to test paths) cannot be distinguished from legitimate agent behavior using the same patterns.
 
-2. **Semantic hacks are not detectable.** Reward hacking via wrong answers, sandbagging, adversarial framing, or reasoning manipulation leaves no structural AST signature. These account for the majority of MALT bypass\_constraints and sabotage samples that are not detected.
+2. **Semantic hacks are not detectable.** Reward hacking via wrong answers, sandbagging, adversarial framing, or reasoning manipulation leaves no structural AST signature. These account for the majority of MALT bypass\_constraints and sabotage samples that are not detected, and nearly all of the non-Python bypass gap.
 
-3. **Bash and JavaScript adapters are less mature.** The Python adapter uses Python's built-in `ast` module (stable since Python 3.0). Bash and JS adapters use tree-sitter grammars which may miss patterns on malformed or unusual syntax.
+3. **Bash and JavaScript bypass detection ceiling in standalone mode.** In MALT, 316/322 missed Bash bypass samples and 30/30 missed JS bypass samples show zero structural signal. The bypasses are semantically encoded (incorrect behavior, silent failure), not structurally encoded. Pair mode (with original code) would provide additional signal via Check 2 and Check 1.
 
 4. **MALT code blocks are trajectory fragments.** Extracted blocks are not standalone programs — they may be mid-function snippets, partial imports, or continuation of earlier code. This affects both detection rates and false positive analysis.
 
@@ -228,7 +239,7 @@ Key differentiators:
 
 ```
 Python: 3.11+
-ast-guard commit: 8eed094  (v2.1.2, iterations 11-12 applied)
+ast-guard commit: 77f1011  (v2.2.0, multilang first-class)
 tree-sitter: required for multilang (pip install ast-guard[multilang])
 MALT dataset: metr-evals/malt-public (HuggingFace, public)
 ```
@@ -238,24 +249,23 @@ MALT dataset: metr-evals/malt-public (HuggingFace, public)
 ```bash
 # Install
 git clone <repo> ast-guard && cd ast-guard
-git checkout 2187de8
+git checkout 77f1011
 pip install -e ".[multilang]"
 
 # Built-in TRACE benchmark
-python -m benchmarks.run_benchmark trace
+python -m benchmarks.run_benchmark --benchmark trace
 
 # Countdown-Code benchmark
-python -m benchmarks.run_benchmark countdown-code
+python -m benchmarks.run_benchmark --benchmark countdown-code
 
 # School of Reward Hacks benchmark
-python -m benchmarks.run_benchmark school-of-hacks
+python -m benchmarks.run_benchmark --benchmark school-of-hacks
 
 # MALT benchmark (requires dataset at default path)
-python -m benchmarks.run_benchmark malt \
-  --input ~/.ast-guard/benchmarks/malt-public/malt_code_samples.json
+python -m benchmarks.run_benchmark --benchmark malt
 
-# Full cross-benchmark run with JSON export
-python -m benchmarks.run_benchmark --all --json results.json
+# Full cross-benchmark run with export
+python -m benchmarks.run_benchmark --benchmark all --export results.json
 ```
 
 ### Dataset versions

@@ -8,7 +8,7 @@ ast-guard's evaluation follows these principles:
 
 1. **No cherry-picking.** All intermediate configurations were run against the full 81,515-sample MALT set. Results at every iteration are reported, including configurations that performed worse than their predecessor.
 2. **Pre-specified metrics.** The primary metrics (FPR on normal, detection rate on hardcoded and bypass) were fixed before optimization began.
-3. **No test-set contamination.** The 410-test unit and integration suite tests no MALT samples. MALT is evaluated only via the benchmark runner.
+3. **No test-set contamination.** The 482-test unit and integration suite tests no MALT samples. MALT is evaluated only via the benchmark runner.
 4. **Monotonic documentation.** Changes were only accepted if they reduced FPR without reducing detection by more than the FPR gain. One iteration (Check 3 tiered, iteration 3) violated this and was partially reverted.
 
 ---
@@ -30,7 +30,8 @@ Each iteration represents a distinct configuration change evaluated against the 
 | 9 | Context-aware destructive + conditional literals | 16.3% | 70.9% | 41.7% |
 | 10 | Literal condition tightened (score≥30) | 15.8% | 70.9% | 41.7% |
 | 11 | Behavioral fixes + long-string filter (v2.1.1) | 5.6% | 50.3% | 36.1% |
-| 12 | Dataflow thresholds + numeric-seq + workspace-write (v2.1.2) | **5.1%** | **46.9%** | **33.2%** |
+| 12 | Dataflow thresholds + numeric-seq + workspace-write (v2.1.2) | 5.1% | 46.9% | 33.2% |
+| 13 | Multilang first-class: Check 5+6 for Bash/JS (v2.2.0) | **5.0%** | **46.9%** | **34.5%** |
 
 ### Iteration 1 — Naive Standalone
 
@@ -150,6 +151,32 @@ Three fixes based on FP analysis of the 4,348 remaining FPs from iteration 11:
 
 **Remaining FP structure (3,917 FPs):** Dominated by behavioral patterns that are genuinely ambiguous without semantic context: subprocess import (397), intent_mismatch_computation (310), environ_mutation (256), process_termination (244), stack_introspection (224). These are accepted FPs — see the False Positive Analysis section.
 
+### Iteration 13 — Multilang First-Class: Check 5+6 for Bash/JS (v2.2.0)
+
+Promoted Bash and JavaScript from preview-quality adapters to first-class ast-guard citizens. Previously, Check 5 (Extensional Enumeration) was dead for both languages (always returning an empty list), and Check 6 (Behavioral Risk Scoring) ran an incomplete stub that scored `dangerous_calls × 50` then returned early. Both languages now run the same 6-check pipeline as Python.
+
+**Changes:**
+
+1. **Check 5 for Bash** — `_collect_enumeration_analysis()` in `lang_bash.py` walks the tree-sitter AST. Detects `case/esac` items with bare string/word literals and `if/elif` with `[[ $x == "y" ]]`-style literal comparisons. Glob patterns (`[0-9]*`) are correctly excluded.
+
+2. **Check 5 for JavaScript** — `_collect_enumeration_analysis()` in `lang_javascript.py` detects `switch/case` with string/number literal values and `if/else-if` with `===`/`==` comparisons against literals. Known limitation: object-as-lookup dispatch (`const actions = {foo: fn}; actions[var]()`) is not detected — requires type tracking beyond tree-sitter structural analysis.
+
+3. **Check 6 for Bash** — New `lang_bash_behavioral.py` module. Stage 3A signals (eval_dynamic +70, process_termination +70, pipe_to_shell +70, subprocess_shell +30, network_fetch +20). Stage 3B signals (test_file_write +50, environ_mutation +30, startup_persistence +50, destructive_call +50). Detection via regex over code text and `dangerous_calls` metric dict.
+
+4. **Check 6 for JavaScript** — New `lang_javascript_behavioral.py` module. Stage 3A signals (eval_dynamic +70 including `Function()` constructor, process_termination +70, subprocess_shell +30, dangerous_import +30). Stage 3B signals (test_file_write +50, environ_mutation +30, module_cache_manipulation +70 via `require.cache`).
+
+5. **CLI flags** — `--language {python,bash,javascript,auto}` and `--no-multilang` added. Routing logic dispatches to `scan_multilang()` for non-Python detected languages. Language detection method and score surfaced in ANSI/SARIF output.
+
+6. **Config** — `multilang = "auto"` added to `[settings]` defaults (`"auto"` uses tree-sitter if installed, `true` requires it, `false` disables).
+
+**Impact:** FPR 5.1% → 5.0% (−0.1 pp). Bypass detection 33.2% → 34.5% (+1.3 pp). Hardcoded 46.9% → 46.9% (unchanged). Sabotage 7.6% (unchanged).
+
+**Language breakdown for bypass_constraints:** Python 38.3%, Bash 17.6%, JS 6.2%. The lower Bash/JS detection reflects that 316/322 missed Bash bypass samples and 30/30 missed JS bypass samples have zero structural signal — they are semantically encoded (silent failure, wrong logic) rather than structurally encoded bypasses. This is a fundamental ceiling for static analysis without a pair-mode baseline.
+
+**Bash/JS normal FP contribution:** 6 Bash + 9 JS normal FPs (0.4% of total normal FPs) — the new behavioral modules are well-calibrated.
+
+**Test suite:** Grew from 410 to 482 tests (+72): new bash behavioral tests, JS behavioral tests, multilang enumeration tests, detect_language_with_info tests.
+
 ---
 
 ## Validation Process
@@ -160,7 +187,7 @@ All configuration changes were validated against the full test suite before bein
 
 ```bash
 python -m pytest tests/ -v
-# 410 tests collected, 8 skipped (MCP extra not installed)
+# 482 tests collected, 8 skipped (MCP extra not installed)
 ```
 
 The test suite includes:
