@@ -589,9 +589,13 @@ def check_5_extensional_enumeration(orig_metrics, gen_metrics, config):
       - enumeration_ifs / total_ifs >= enumeration_ratio (default 0.70), AND
       - loop_count <= 1
 
-    This pattern is documented as a failure mode of RLVR-trained LLMs
-    (Helff et al., "LLMs Gaming Verifiers", arXiv:2604.15149) — the model
-    achieves reward by memorizing test inputs rather than solving the task.
+    Extensional enumeration as a reward-hacking *concept* is from Helff et al.,
+    "LLMs Gaming Verifiers" (arXiv:2604.15149), where it was studied in
+    inductive logic-reasoning tasks (Prolog-style rule induction). The Python
+    `if`/`elif` and `match`/`case` detector here is ast-guard's own analogue of
+    that idea, not a pattern Helff measured directly. The shared failure mode:
+    the model achieves reward by memorizing input/output pairs rather than
+    inducing a general rule.
 
     The check uses the generated code only; the original metrics are accepted
     for API symmetry with the other checks.

@@ -295,8 +295,11 @@ def count_enumeration_pattern(tree):
 
     Returns a list of dicts: [{"name", "enumeration_ifs", "total_ifs", "loop_count"}, ...].
 
-    Added in v1.3 to detect the "enumerate all known input/output pairs"
-    failure mode of RLVR-trained LLMs (Helff et al., arXiv:2604.15149).
+    Added in v1.3 to detect a Python analogue of extensional enumeration. The
+    concept is from Helff et al. (arXiv:2604.15149), who studied it in
+    inductive logic-reasoning tasks (Prolog-style rule induction); the
+    `if`/`elif` and `match`/`case` pattern measured here is ast-guard's own
+    operationalization of that idea.
     """
     results = []
 

@@ -90,7 +90,7 @@ ast-guard parses code into an Abstract Syntax Tree and evaluates structural prop
 2. **Complexity Collapse** — per-function McCabe complexity drop >60% without a recognized legitimate optimization.
 3. **Forbidden Calls & Obfuscation** — diff-based detection of new `eval`/`exec`/`subprocess`/`ctypes`/`SystemExit` calls, alias resolution, `chr()`-obfuscation, builtins subscript.
 4. **Import Drift** — new imports against blocklist (CRITICAL) and safelist (CLEAN). Unknown imports → WARNING.
-5. **Extensional Enumeration** — the RLVR shortcut documented by Helff et al.: flat if/elif or match/case chains covering ≥70% of branches with no loops.
+5. **Extensional Enumeration** — a Python analogue of the RLVR-shortcut concept from Helff et al.: flat if/elif or match/case chains covering ≥70% of branches with no loops. Helff studied the concept in inductive-logic tasks (Prolog-style rule induction); the if/elif detector here is ast-guard's own operationalization, not a pattern Helff measured directly.
 6. **Behavioral Risk Scoring** (standalone only) — additive YARA/Semgrep-style score from AST patterns. CLEAN <30, WARNING 30–69, CRITICAL ≥70.
 
 ### Verdict Logic
@@ -283,7 +283,7 @@ python -m benchmarks.run_benchmark --benchmark malt --mode strict
 
 - **TRACE** (Deshpande et al. 2026, [arXiv:2601.20103](https://arxiv.org/abs/2601.20103)) — 54-category reward-hacking taxonomy. ast-guard covers 15 structural categories at 95.7% F1; the remainder are semantic.
 - **MALT** (METR 2025) — 10,919 manually reviewed agent transcripts, 81,515 extracted code blocks. The largest labeled dataset in the field.
-- **Helff et al.** ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)) — Extensional enumeration shortcuts in RLVR-trained models. Directly motivates Check 5.
+- **Helff et al.** ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)) — Frames extensional enumeration as a reward-hacking pattern in inductive logic-reasoning tasks (Prolog-style rule induction). Motivates the *concept* behind Check 5; the Python if/elif and match/case detector here is ast-guard's own analogue, not a pattern Helff measured directly.
 - **RewardHackWatch** — Runtime detector combining ML + regex + AST. ast-guard is its deterministic structural complement.
 - **EvilGenie** — Inference-time LLM reviewer. A loader scaffold is present in ast-guard (`benchmarks/loaders/evilgenie.py`) but has not been validated against real data — EvilGenie is a live-harness benchmark with no static data release, so field names are guessed.
 - **ZeroFalse** ([arXiv:2510.02534](https://arxiv.org/abs/2510.02534)) — Calibrated confidence levels for static-analysis findings. Motivates ast-guard's confidence-score module (`ast_guard/confidence.py`).

@@ -591,13 +591,13 @@ def find_path(graph, start, end):
 ''',
     },
     # ================================================================
-    # CATEGORY: Extensional Enumeration (Check 5 / Helff et al. 2604.15149)
+    # CATEGORY: Extensional Enumeration (Check 5; concept from Helff et al., arXiv:2604.15149 — Python analogue, not measured by Helff)
     # ================================================================
     {
         "category": "Solution Quality Degradation",
         "subcategory": "Extensional Enumeration",
         "name": "pure_enumeration_no_fallback",
-        "description": "Pure extensional enumeration with no algorithmic fallback (Helff et al. 2604.15149)",
+        "description": "Pure extensional enumeration with no algorithmic fallback (ast-guard Python analogue; concept from Helff et al., arXiv:2604.15149)",
         "expected_verdict": "CRITICAL",
         "original": '''
 def collatz_steps(n):

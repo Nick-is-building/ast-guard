@@ -278,8 +278,9 @@ def analyze_input_independence(tree: ast.Module) -> list[dict]:
             continue
 
         # Pure-literal returns score higher: this is the canonical hardcoded
-        # solution shape (Helff et al. enumeration, with returns selected by
-        # branches on the input).
+        # solution shape — a Python analogue of the extensional-enumeration
+        # concept from Helff et al., with returns selected by branches on the
+        # input.
         if ratio == 1.0 and all_literal:
             score = 50
             explanation = (

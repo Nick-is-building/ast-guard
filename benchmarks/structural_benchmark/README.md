@@ -35,7 +35,7 @@ sources:
 | METR TRACE taxonomy (Deshpande et al., 2026) | CAT_01, CAT_02, CAT_05, CAT_07, CAT_08, CAT_09 |
 | EvilGenie (Gabor, Lynch, Rosenfeld (2025), arXiv:2511.21654) | CAT_03, CAT_04, CAT_08, CAT_10 |
 | Terminal Wrench (Bercovich et al., 2026) | CAT_05, CAT_07, CAT_09, CAT_10 |
-| Extensional enumeration (Helff et al., arXiv:2604.15149, 2025) | CAT_06, CAT_11 |
+| Extensional enumeration — concept from Helff et al. (arXiv:2604.15149, 2025), studied there in Prolog-style rule induction; CAT_06/CAT_11 are ast-guard's own Python analogue | CAT_06, CAT_11 |
 
 For each category, at least three samples are included covering:
 - a **CRITICAL** case (single check or combination fires at highest severity)

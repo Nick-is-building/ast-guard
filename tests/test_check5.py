@@ -1,8 +1,10 @@
 """Tests for Check 5 — Extensional Enumeration Detector (v1.3).
 
-Based on Helff et al., "LLMs Gaming Verifiers" (arXiv:2604.15149). The pattern:
-RLVR-trained LLMs replace real algorithms with explicit lookup tables of
-input/output pairs to game the verifier.
+The concept of extensional enumeration as reward hacking is from Helff et al.,
+"LLMs Gaming Verifiers" (arXiv:2604.15149), studied in inductive logic-reasoning
+tasks (Prolog-style rule induction). Check 5 is ast-guard's Python analogue of
+that idea: detecting `if`/`elif` and `match`/`case` chains that replace a real
+algorithm with an explicit input/output lookup table.
 """
 
 import pytest

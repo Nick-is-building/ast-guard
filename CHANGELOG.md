@@ -207,7 +207,7 @@ Large FPR reduction driven by behavioral fixes and the long-string filter. TP lo
 ## [1.3.0] - 2026-05-28
 
 ### Added
-- **Check 5 — Extensional Enumeration Detector**: Detects the "enumerate all known input/output pairs" failure mode of RLVR-trained LLMs documented by Helff et al., "LLMs Gaming Verifiers" ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)). Per generated function, fires WARNING when `total_ifs >= enumeration_min_ifs` (default 5), `enumeration_ifs / total_ifs >= enumeration_ratio` (default 0.70), and `loop_count <= 1`. Recognizes both `if`/`elif` chains and `match`/`case` blocks.
+- **Check 5 — Extensional Enumeration Detector**: Detects a Python analogue of extensional enumeration as a reward-hacking pattern. The concept is from Helff et al., "LLMs Gaming Verifiers" ([arXiv:2604.15149](https://arxiv.org/abs/2604.15149)), studied in inductive logic-reasoning tasks (Prolog-style rule induction); the `if`/`elif` and `match`/`case` detector here is ast-guard's own operationalization, not a pattern Helff measured directly. Per generated function, fires WARNING when `total_ifs >= enumeration_min_ifs` (default 5), `enumeration_ifs / total_ifs >= enumeration_ratio` (default 0.70), and `loop_count <= 1`. Recognizes both `if`/`elif` chains and `match`/`case` blocks.
 - **`count_enumeration_pattern(tree)` in `analyzer.py`**: Per-function analysis emitting `{name, enumeration_ifs, total_ifs, loop_count}`. Included in `extract_metrics()` as `enumeration_analysis`. Skips nested functions/classes (each is reported separately).
 - **Combination Logic Extensions**:
   - Check 5 WARNING + Check 2 WARNING escalates to **CRITICAL** (enumeration + complexity collapse).
