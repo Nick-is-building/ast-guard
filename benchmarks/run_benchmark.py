@@ -226,8 +226,14 @@ _BENCHMARK_NAMES = [
 _MULTILANG_LANGUAGES = frozenset({"bash", "javascript"})
 
 
-def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
-    """Run ast-guard on a CodePair and return a result record."""
+def _scan_code_pair(pair: dict, mode: str = "strict", emit_confidence: bool = False) -> dict:
+    """Run ast-guard on a CodePair and return a result record.
+
+    When ``emit_confidence`` is true, the per-sample record additionally
+    carries ``confidence`` (0–100 int) so downstream tools like
+    ``benchmarks/score_curve.py`` can build ROC / PR curves. Off by default
+    to keep the existing JSON shape stable.
+    """
     language = pair.get("language", "python")
     base = {
         "sample_id": pair["sample_id"],
@@ -258,7 +264,7 @@ def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
                 for c in checks.values()
                 for f in c.get("findings", [])[:2]
             ][:4]
-            return {
+            rec = {
                 **base,
                 "verdict": verdict,
                 "detected": verdict in ("WARNING", "CRITICAL"),
@@ -266,6 +272,9 @@ def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
                 "checks_fired": checks_fired,
                 "top_findings": top_findings,
             }
+            if emit_confidence:
+                rec["confidence"] = result.get("confidence", 0)
+            return rec
         except Exception as exc:
             logger.warning(
                 "Error standalone-scanning %s/%s: %s",
@@ -285,7 +294,10 @@ def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
                 telemetry_enabled=False,
             )
             verdict = result["verdict"]
-            return {**base, "verdict": verdict, "detected": verdict in ("WARNING", "CRITICAL"), "skipped": False}
+            rec = {**base, "verdict": verdict, "detected": verdict in ("WARNING", "CRITICAL"), "skipped": False}
+            if emit_confidence:
+                rec["confidence"] = result.get("confidence", 0)
+            return rec
         except Exception as exc:
             logger.warning("Error scanning %s/%s: %s", pair["benchmark"], pair["sample_id"], exc)
             return {**base, "verdict": "ERROR", "detected": False, "skipped": True, "skip_reason": str(exc)}
@@ -301,7 +313,10 @@ def _scan_code_pair(pair: dict, mode: str = "strict") -> dict:
                 telemetry_enabled=False,
             )
             verdict = result["verdict"]
-            return {**base, "verdict": verdict, "detected": verdict in ("WARNING", "CRITICAL"), "skipped": False}
+            rec = {**base, "verdict": verdict, "detected": verdict in ("WARNING", "CRITICAL"), "skipped": False}
+            if emit_confidence:
+                rec["confidence"] = result.get("confidence", 0)
+            return rec
         except ImportError:
             return {
                 **base, "verdict": "N/A", "detected": False, "skipped": True,
@@ -320,6 +335,7 @@ def run_external_benchmarks(
     benchmark_names: list[str],
     download: bool = False,
     mode: str = "strict",
+    emit_confidence: bool = False,
 ) -> dict:
     """Load and scan external benchmark samples; return structured results."""
     from benchmarks.loaders import get_loader, get_all_loaders
@@ -379,7 +395,7 @@ def run_external_benchmarks(
         by_category: dict[str, dict] = {}
 
         for pair in samples:
-            rec = _scan_code_pair(pair, mode=mode)
+            rec = _scan_code_pair(pair, mode=mode, emit_confidence=emit_confidence)
             details.append(rec)
 
             cat = rec["category"]
@@ -715,6 +731,15 @@ def main():
         default="strict",
         help="ast-guard scan mode for external benchmarks (default: strict)",
     )
+    parser.add_argument(
+        "--emit-confidence",
+        action="store_true",
+        help=(
+            "Include the 0–100 'confidence' field on each per-sample record. "
+            "Off by default; opt in for ROC / PR analysis via "
+            "benchmarks/score_curve.py."
+        ),
+    )
     args = parser.parse_args()
 
     if args.benchmark:
@@ -742,7 +767,10 @@ def main():
             names = remaining
 
         ext_results = run_external_benchmarks(
-            names, download=args.download, mode=args.mode
+            names,
+            download=args.download,
+            mode=args.mode,
+            emit_confidence=args.emit_confidence,
         )
         if args.export:
             export_results(ext_results, Path(args.export))
