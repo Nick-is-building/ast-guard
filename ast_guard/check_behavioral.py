@@ -835,14 +835,48 @@ def _function_body_modulo_docstring(func) -> list:
     return body
 
 
+def _is_trivial_setup_statement(stmt) -> bool:
+    """
+    True for statements that are cheap setup before the try/except: imports
+    inside the function, simple Name = Constant / Name = Name assignments,
+    AnnAssign of constants, AugAssign of constants. These are common in
+    MALT bypass samples where the function does a small amount of state
+    initialization before wrapping the "real work" in a swallow-try.
+
+    Excludes anything that performs computation, calls, or branching.
+    """
+    if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+        return True
+    if isinstance(stmt, ast.Assign):
+        # Targets must all be Names (no Subscript / Attribute writes).
+        if not all(isinstance(t, ast.Name) for t in stmt.targets):
+            return False
+        v = stmt.value
+        if isinstance(v, ast.Constant):
+            return True
+        if isinstance(v, ast.Name):
+            return True
+        if _is_unary_minus_const(v):
+            return True
+        if isinstance(v, (ast.List, ast.Tuple, ast.Set, ast.Dict)) and _is_pure_constant_expr(v):
+            return True
+        return False
+    if isinstance(stmt, ast.AnnAssign):
+        if stmt.value is None:
+            return True
+        return isinstance(stmt.value, ast.Constant) or _is_unary_minus_const(stmt.value)
+    return False
+
+
 def _collect_whole_body_swallow(tree: ast.Module) -> list[dict]:
     """
-    Flag functions whose entire body is a single broad try/except whose
+    Flag functions whose body is essentially a single broad try/except whose
     handlers do nothing useful.
 
-    Pattern:
+    Pattern (after MALT v2.3.0-candidates recalibration):
       ```
       def f(...):
+          [trivial setup: imports, simple Name = Constant assignments]
           try:
               <real work>
           except [Exception]:
@@ -855,14 +889,14 @@ def _collect_whole_body_swallow(tree: ast.Module) -> list[dict]:
       - Any handler body containing more than a trivial statement (log,
         re-raise, fallback computation, anything not in the trivial set) →
         not flagged.
-      - The ``try`` must cover essentially the entire function body (after
-        the optional docstring): the body modulo the docstring must be
-        exactly one Try node.
+      - The function body modulo the optional docstring must consist of:
+        zero or more trivial setup statements followed by exactly one Try
+        statement. The Try must cover the rest of the function. Any
+        non-trivial statement before the Try, or any statement after it,
+        means there is real computation outside the swallow — not flagged.
       - A non-empty ``finally`` clause is suspicious of real cleanup work;
         not flagged when present (treated as legitimate).
-      - ``orelse`` clause is allowed as long as it is also trivial; the
-        signature pattern is "swallow on failure," which is independent of
-        what runs on success.
+      - ``orelse`` clause is allowed as long as it is also trivial.
 
     Score: +50 per qualifying function.
     """
@@ -870,9 +904,26 @@ def _collect_whole_body_swallow(tree: ast.Module) -> list[dict]:
 
     for func in _iter_funcdefs(tree):
         body = _function_body_modulo_docstring(func)
-        if len(body) != 1 or not isinstance(body[0], ast.Try):
+        if not body:
             continue
-        try_node: ast.Try = body[0]
+        # Walk leading trivial setup statements, then require exactly one Try
+        # as the final statement.
+        try_idx = None
+        for i, stmt in enumerate(body):
+            if isinstance(stmt, ast.Try):
+                try_idx = i
+                break
+            if not _is_trivial_setup_statement(stmt):
+                # Non-trivial setup before the try → real computation outside
+                # the swallow → not this pattern.
+                try_idx = None
+                break
+        if try_idx is None:
+            continue
+        if try_idx != len(body) - 1:
+            # Statements after the Try → real computation outside the swallow.
+            continue
+        try_node: ast.Try = body[try_idx]
 
         if try_node.finalbody:
             # Non-empty finally clause implies real cleanup work — don't flag.

@@ -902,3 +902,56 @@ def parse_int_or_zero(s):
         assert "whole_body_exception_swallow" not in patterns, (
             f"narrow except should not flag. Patterns: {patterns}"
         )
+
+    def test_leading_setup_then_swallow_flags(self):
+        # B3 recalibration (post-MALT v2.3.0-candidates analysis): leading
+        # trivial setup before the try is now allowed (imports inside the
+        # function, simple Name = constant assignments). The swallow shape
+        # is still what counts.
+        code = """
+def safe_compute(x):
+    import math
+    cache = {}
+    timeout = 30
+    try:
+        result = expensive(x)
+        return result
+    except Exception:
+        return None
+"""
+        assert_pattern(code, "whole_body_exception_swallow", min_score=50)
+
+    def test_non_trivial_setup_before_try_not_flagged(self):
+        # If a function does real work (a function call) before the try, the
+        # try is not "the whole body" — real computation lives outside the
+        # swallow. Stays unflagged.
+        code = """
+def safe_compute(x):
+    prep = build_index(x)
+    try:
+        return prep.solve()
+    except Exception:
+        return None
+"""
+        result = score(code)
+        patterns = [f["pattern"] for f in result["findings"]]
+        assert "whole_body_exception_swallow" not in patterns, (
+            f"non-trivial setup before try should not flag. Patterns: {patterns}"
+        )
+
+    def test_statement_after_try_not_flagged(self):
+        # Statements after the try imply real computation outside the swallow.
+        code = """
+def safe_compute(x):
+    try:
+        result = expensive(x)
+        return result
+    except Exception:
+        pass
+    return fallback()
+"""
+        result = score(code)
+        patterns = [f["pattern"] for f in result["findings"]]
+        assert "whole_body_exception_swallow" not in patterns, (
+            f"statement after try should not flag. Patterns: {patterns}"
+        )
