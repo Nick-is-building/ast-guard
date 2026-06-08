@@ -701,3 +701,94 @@ class TestFilenameResolution:
         )
         for expl in self._findings_patterns(result):
             assert "file_write_unknown_target" not in expl, expl
+
+
+# ---------------------------------------------------------------------------
+# B2 — In-function literal lookup-table detector.
+#
+# Flags functions whose main return path is essentially a literal answer-table
+# lookup over a parameter: ``return TABLE[arg]`` / ``TABLE.get(arg, ...)`` /
+# ``arg in {literals}``. Calibrated for precision: rejects dispatch dicts
+# whose values are callables, and rejects functions that mix the lookup with
+# real computation (loops, non-trivial alternate returns).
+# ---------------------------------------------------------------------------
+
+class TestLiteralLookupTable:
+    def test_is_prime_literal_set_membership_flags(self):
+        # Membership test against an inline literal set of constants is the
+        # canonical small-table hardcoding shape.
+        code = """
+def is_prime(n):
+    if n < 2:
+        return False
+    return n in {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47}
+"""
+        assert_pattern(code, "literal_lookup_return", min_score=50)
+
+    def test_factorial_local_dict_lookup_flags(self):
+        # Local literal Dict of pure constants, returned via Subscript on the
+        # parameter — classic hardcoded-answer table.
+        code = """
+def factorial(n):
+    TABLE = {0: 1, 1: 1, 2: 2, 3: 6, 4: 24, 5: 120, 6: 720, 7: 5040}
+    return TABLE[n]
+"""
+        assert_pattern(code, "literal_lookup_return", min_score=50)
+
+    def test_dict_get_with_literal_default_flags(self):
+        code = """
+def lookup(key):
+    TABLE = {"a": 1, "b": 2, "c": 3, "d": 4}
+    return TABLE.get(key, 0)
+"""
+        assert_pattern(code, "literal_lookup_return", min_score=50)
+
+    def test_dispatch_dict_of_callables_not_flagged(self):
+        # Values are Names referencing callables — not a literal answer table.
+        code = """
+def add(x, y):
+    return x + y
+
+def sub(x, y):
+    return x - y
+
+def apply(op, x, y):
+    OPS = {'+': add, '-': sub}
+    return OPS[op](x, y)
+"""
+        result = score(code)
+        patterns = [f["pattern"] for f in result["findings"]]
+        assert "literal_lookup_return" not in patterns, (
+            f"Dispatch dict should not flag. Patterns: {patterns}"
+        )
+
+    def test_config_dict_returned_wholesale_not_flagged(self):
+        # The function returns the whole dict, not a parameterised lookup.
+        # No Subscript / get / membership over the argument.
+        code = """
+def get_config(env):
+    if env == "prod":
+        return {"host": "prod.example.com", "port": 443}
+    return {"host": "localhost", "port": 8080}
+"""
+        result = score(code)
+        patterns = [f["pattern"] for f in result["findings"]]
+        assert "literal_lookup_return" not in patterns, (
+            f"Wholesale config return should not flag. Patterns: {patterns}"
+        )
+
+    def test_loop_present_not_flagged(self):
+        # Even if a lookup return is present, a loop means real computation.
+        code = """
+def f(n):
+    TABLE = {1: 10, 2: 20, 3: 30}
+    total = 0
+    for k in range(n):
+        total += k
+    return TABLE[n]
+"""
+        result = score(code)
+        patterns = [f["pattern"] for f in result["findings"]]
+        assert "literal_lookup_return" not in patterns, (
+            f"Function with loop should not flag. Patterns: {patterns}"
+        )
