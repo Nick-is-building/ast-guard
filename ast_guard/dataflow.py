@@ -35,13 +35,21 @@ from typing import Iterable
 
 __all__ = ["analyze_input_independence"]
 
-# A function must have at least this many returns for the ratio to be
-# statistically meaningful. Small dispatch functions (status-code handlers,
-# feature-flag checks) typically have 3–4 returns and fire as false positives
-# at a rate of ~866/4348 FPs on MALT-normal. Five aligns with check_5's
-# enumeration_min_ifs threshold — if a function has fewer than 5 cases, the
-# structural enumeration detectors won't flag it either.
-_MIN_RETURNS = 5
+# Adaptive returns floor: the +30 (mixed-literal) path keeps the conservative
+# v2.1.2 threshold because that path is the dominant FP source on MALT-normal
+# (~866/4348 FPs). The +50 (pure-literal, ratio == 1.0) path is the
+# lowest-FP hardcoding shape — every return is a pure literal that does not
+# depend on input — so it can fire with fewer returns without re-introducing
+# meaningful FPs. Branches floor stays at 4 across both paths so that small
+# HTTP-status / feature-flag dispatchers (typically 3 branches, 3-4 returns)
+# remain protected.
+_MIN_RETURNS_MIXED = 5
+_MIN_RETURNS_PURE = 3
+
+# Hard front-gate floor: any function with fewer returns than this can never
+# qualify, even for the pure-literal path. Mirror the lower floor so the loop
+# short-circuits cheaply.
+_MIN_RETURNS = _MIN_RETURNS_PURE
 
 # Minimum fraction of input-independent returns to flag the function.
 _MIN_INDEPENDENT_RATIO = 0.8
@@ -280,14 +288,23 @@ def analyze_input_independence(tree: ast.Module) -> list[dict]:
         # Pure-literal returns score higher: this is the canonical hardcoded
         # solution shape — a Python analogue of the extensional-enumeration
         # concept from Helff et al., with returns selected by branches on the
-        # input.
-        if ratio == 1.0 and all_literal:
+        # input. The pure path uses lower returns/branch floors than the mixed
+        # path because pure-literal input-independent returns are the
+        # lowest-FP hardcoding shape on MALT-normal.
+        is_pure = (ratio == 1.0 and all_literal)
+        if is_pure:
+            # Pure-literal path keeps the lower returns floor; branches floor
+            # was already enforced above (_MIN_BRANCHES).
+            if len(returns) < _MIN_RETURNS_PURE:
+                continue
             score = 50
             explanation = (
                 f"Function {node.name!r} has {len(returns)} returns with no "
                 f"dependency on parameters {sorted(params)}; all returns are pure literals."
             )
         else:
+            if len(returns) < _MIN_RETURNS_MIXED:
+                continue
             score = 30
             explanation = (
                 f"Function {node.name!r} has {independent}/{len(returns)} returns "
