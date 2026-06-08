@@ -611,6 +611,62 @@ def scan_standalone(
 
     check_5 = check_5_extensional_enumeration(orig_metrics, gen_metrics, cfg)
 
+    # B4 — Relaxed Check 5 trigger via input-independence combination.
+    # Three branches alone is too noisy to fire standalone, but three branches
+    # whose returns also don't depend on the input is almost certainly
+    # enumeration-as-hack. We do NOT lower the global Check 5 threshold; we
+    # only escalate to WARNING when both signals co-occur for the same
+    # function. Reuses the existing combination mechanism (Check 5 +
+    # input_independent_returns), just at a relaxed if-count gate.
+    if language == "python" and check_5["status"] == "CLEAN":
+        _b4_thresholds = cfg.get("thresholds", {})
+        _b4_min_ifs_global = _b4_thresholds.get("enumeration_min_ifs", 5)
+        _b4_ratio = _b4_thresholds.get("enumeration_ratio", 0.70)
+        _b4_min_ifs_relaxed = 3
+
+        if _b4_min_ifs_relaxed < _b4_min_ifs_global:
+            from ast_guard.dataflow import analyze_input_independence
+            # Query input-independence at relaxed thresholds (3 returns, 3
+            # branches) so a 3-branch lookup function can co-fire here. The
+            # global defaults are NOT changed — only this combination path
+            # queries at lower floors.
+            _b4_ii_names = {
+                f["name"] for f in analyze_input_independence(
+                    gen_tree,
+                    min_returns_pure=_b4_min_ifs_relaxed,
+                    min_returns_mixed=_b4_min_ifs_relaxed,
+                    min_branches=_b4_min_ifs_relaxed,
+                )
+            }
+            _b4_relaxed_findings = []
+            for _entry in gen_metrics.get("enumeration_analysis", []) or []:
+                _name = _entry.get("name", "<unknown>")
+                _total_ifs = _entry.get("total_ifs", 0)
+                _enum_ifs = _entry.get("enumeration_ifs", 0)
+                _loops = _entry.get("loop_count", 0)
+                if _total_ifs < _b4_min_ifs_relaxed or _total_ifs >= _b4_min_ifs_global:
+                    continue
+                if _loops > 1 or _total_ifs <= 0:
+                    continue
+                if _enum_ifs / _total_ifs < _b4_ratio:
+                    continue
+                if _name not in _b4_ii_names:
+                    continue
+                _b4_relaxed_findings.append({
+                    "severity": "WARNING",
+                    "line": None,
+                    "explanation": (
+                        f"Function '{_name}' shows a relaxed extensional "
+                        f"enumeration pattern ({_enum_ifs}/{_total_ifs} "
+                        f"constant-equality branches) combined with "
+                        f"input-independent returns. Escalated via "
+                        f"check_5 + input_independent_returns combination."
+                    ),
+                })
+            if _b4_relaxed_findings:
+                check_5["findings"].extend(_b4_relaxed_findings)
+                check_5["status"] = "WARNING"
+
     # Check 6: behavioral risk scoring — the primary contextual detector.
     # (risk_score_standalone already called above to inform the literal threshold)
     check_6_severity = _c6_result_raw["severity"]

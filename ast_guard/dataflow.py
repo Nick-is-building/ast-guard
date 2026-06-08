@@ -211,9 +211,20 @@ def _collect_returns(
     return returns
 
 
-def analyze_input_independence(tree: ast.Module) -> list[dict]:
+def analyze_input_independence(
+    tree: ast.Module,
+    *,
+    min_returns_pure: int | None = None,
+    min_returns_mixed: int | None = None,
+    min_branches: int | None = None,
+) -> list[dict]:
     """
     Analyze every FunctionDef/AsyncFunctionDef in ``tree`` for input-independent returns.
+
+    Optional kwargs let callers query at relaxed thresholds without changing
+    the module-wide defaults. These are intended for combination-escalation
+    paths (e.g. Check 5 + input-independence at 3 branches) — the default
+    behavior is unchanged when no kwargs are provided.
 
     Returns a list of findings, one per qualifying function:
 
@@ -245,6 +256,11 @@ def analyze_input_independence(tree: ast.Module) -> list[dict]:
     """
     findings: list[dict] = []
 
+    pure_floor = min_returns_pure if min_returns_pure is not None else _MIN_RETURNS_PURE
+    mixed_floor = min_returns_mixed if min_returns_mixed is not None else _MIN_RETURNS_MIXED
+    branches_floor = min_branches if min_branches is not None else _MIN_BRANCHES
+    front_gate_returns = min(pure_floor, mixed_floor)
+
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -255,11 +271,11 @@ def analyze_input_independence(tree: ast.Module) -> list[dict]:
             continue
 
         returns = _collect_returns(node)
-        if len(returns) < _MIN_RETURNS:
+        if len(returns) < front_gate_returns:
             continue
 
         branches = _count_branches(node)
-        if branches < _MIN_BRANCHES:
+        if branches < branches_floor:
             continue
 
         tainted = _compute_tainted_names(node, params)
@@ -294,8 +310,8 @@ def analyze_input_independence(tree: ast.Module) -> list[dict]:
         is_pure = (ratio == 1.0 and all_literal)
         if is_pure:
             # Pure-literal path keeps the lower returns floor; branches floor
-            # was already enforced above (_MIN_BRANCHES).
-            if len(returns) < _MIN_RETURNS_PURE:
+            # was already enforced above.
+            if len(returns) < pure_floor:
                 continue
             score = 50
             explanation = (
@@ -303,7 +319,7 @@ def analyze_input_independence(tree: ast.Module) -> list[dict]:
                 f"dependency on parameters {sorted(params)}; all returns are pure literals."
             )
         else:
-            if len(returns) < _MIN_RETURNS_MIXED:
+            if len(returns) < mixed_floor:
                 continue
             score = 30
             explanation = (
