@@ -777,6 +777,122 @@ def _collect_literal_lookup_returns(tree: ast.Module) -> list[dict]:
     return findings
 
 
+def _is_broad_except(handler: ast.ExceptHandler) -> bool:
+    """Bare ``except:`` or ``except Exception[ as e]:`` — anything broader than
+    a specific subclass."""
+    if handler.type is None:
+        return True
+    if isinstance(handler.type, ast.Name) and handler.type.id == "Exception":
+        return True
+    if isinstance(handler.type, ast.Attribute) and handler.type.attr == "Exception":
+        return True
+    return False
+
+
+def _is_trivial_handler_body(body: list) -> bool:
+    """
+    True iff the handler body is one of:
+      - ``pass``
+      - ``return``                (no value)
+      - ``return None``
+      - ``return <pure constant>`` (incl. simple negative literal)
+    and contains no other statements (no logging, no re-raise, no fallback).
+    """
+    if len(body) != 1:
+        return False
+    stmt = body[0]
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, ast.Return):
+        if stmt.value is None:
+            return True
+        if isinstance(stmt.value, ast.Constant):
+            return True
+        if _is_unary_minus_const(stmt.value):
+            return True
+    return False
+
+
+def _function_body_modulo_docstring(func) -> list:
+    body = func.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        return body[1:]
+    return body
+
+
+def _collect_whole_body_swallow(tree: ast.Module) -> list[dict]:
+    """
+    Flag functions whose entire body is a single broad try/except whose
+    handlers do nothing useful.
+
+    Pattern:
+      ```
+      def f(...):
+          try:
+              <real work>
+          except [Exception]:
+              pass | return | return None | return <constant>
+      ```
+
+    Calibration (rejects legitimate error handling):
+      - At least one handler must be NARROW (e.g. ``except ValueError``) →
+        not flagged.
+      - Any handler body containing more than a trivial statement (log,
+        re-raise, fallback computation, anything not in the trivial set) →
+        not flagged.
+      - The ``try`` must cover essentially the entire function body (after
+        the optional docstring): the body modulo the docstring must be
+        exactly one Try node.
+      - A non-empty ``finally`` clause is suspicious of real cleanup work;
+        not flagged when present (treated as legitimate).
+      - ``orelse`` clause is allowed as long as it is also trivial; the
+        signature pattern is "swallow on failure," which is independent of
+        what runs on success.
+
+    Score: +50 per qualifying function.
+    """
+    findings: list[dict] = []
+
+    for func in _iter_funcdefs(tree):
+        body = _function_body_modulo_docstring(func)
+        if len(body) != 1 or not isinstance(body[0], ast.Try):
+            continue
+        try_node: ast.Try = body[0]
+
+        if try_node.finalbody:
+            # Non-empty finally clause implies real cleanup work — don't flag.
+            continue
+
+        if not try_node.handlers:
+            continue
+
+        all_broad_and_trivial = True
+        for h in try_node.handlers:
+            if not _is_broad_except(h):
+                all_broad_and_trivial = False
+                break
+            if not _is_trivial_handler_body(h.body):
+                all_broad_and_trivial = False
+                break
+
+        if not all_broad_and_trivial:
+            continue
+
+        findings.append({
+            "name": func.name,
+            "line": getattr(try_node, "lineno", None),
+            "score": 50,
+            "explanation": (
+                f"Function {func.name!r}: whole-body try/except with broad "
+                f"handler(s) that silently swallow failure (pass / return / "
+                f"return <constant>). Likely a bypass that pretends to do "
+                f"work but never raises."
+            ),
+        })
+
+    return findings
+
+
 def _severity_from_score(total_score: int, findings: list) -> str:
     if any(f["score"] >= _THRESHOLD_CRITICAL for f in findings):
         return "CRITICAL"
@@ -1370,6 +1486,18 @@ def risk_score_standalone(
     # be a lookup expression, not a wholesale dict / config return.
     for f in _collect_literal_lookup_returns(tree):
         add("literal_lookup_return", f["score"], f["line"], f["explanation"])
+
+    # -----------------------------------------------------------------------
+    # STRUCTURAL SIGNALS — (a.3) whole-body exception swallow
+    # -----------------------------------------------------------------------
+    # A function whose entire body is a single broad try/except where the
+    # handler does nothing useful (pass / return / return None /
+    # return <constant>) silently swallows every failure instead of doing
+    # the work it claims to. Calibrated against legitimate error handling:
+    # narrow ``except SomeSpecificError`` is not flagged, handlers that log,
+    # re-raise, or fall back to a real computation are not flagged.
+    for f in _collect_whole_body_swallow(tree):
+        add("whole_body_exception_swallow", f["score"], f["line"], f["explanation"])
 
     # -----------------------------------------------------------------------
     # STRUCTURAL SIGNALS — (b) intent / docstring mismatch
