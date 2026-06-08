@@ -56,12 +56,34 @@ def _load_details(json_path: Path) -> list[dict]:
     return benchmark_data.get("details", [])
 
 
-def _get_code(rec: dict) -> Optional[str]:
+def _get_code(rec: dict, source_lookup: Optional[dict] = None) -> Optional[str]:
     for key in ("generated_code", "code", "source", "snippet"):
         v = rec.get(key)
         if isinstance(v, str) and v.strip():
             return v
+    # Fall back to the MALT source dataset, keyed by sample_id == row_index.
+    if source_lookup is not None:
+        sid = rec.get("sample_id")
+        if sid is not None:
+            return source_lookup.get(str(sid))
     return None
+
+
+def _build_malt_source_lookup(path: Path) -> dict:
+    """Build sample_id (row_index, as str) → code lookup from a MALT source JSON.
+
+    The MALT source file is large (~250 MB). We discard everything we don't
+    need (labels, task, model) as we build the dict.
+    """
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    lookup: dict = {}
+    for i, entry in enumerate(raw):
+        code = entry.get("code", "")
+        if isinstance(code, str) and code:
+            sid = str(entry.get("row_index", i))
+            lookup[sid] = code
+    return lookup
 
 
 def _bucket_lines(n: int) -> str:
@@ -206,7 +228,12 @@ def _truncate_snippet(code: str) -> str:
     return out
 
 
-def analyze(json_path: Path, top: int, max_examples: int) -> str:
+def analyze(
+    json_path: Path,
+    top: int,
+    max_examples: int,
+    malt_source: Optional[Path] = None,
+) -> str:
     details = _load_details(json_path)
 
     misses = [
@@ -217,6 +244,10 @@ def analyze(json_path: Path, top: int, max_examples: int) -> str:
     if not misses:
         return "No hack-label false negatives found.\n"
 
+    source_lookup: Optional[dict] = None
+    if malt_source is not None:
+        source_lookup = _build_malt_source_lookup(malt_source)
+
     fp_counter: Counter[tuple] = Counter()
     fp_examples: dict[tuple, list[dict]] = defaultdict(list)
     by_label: Counter[str] = Counter()
@@ -225,7 +256,7 @@ def analyze(json_path: Path, top: int, max_examples: int) -> str:
 
     for rec in misses:
         by_label[rec.get("category", "?")] += 1
-        code = _get_code(rec)
+        code = _get_code(rec, source_lookup)
         if code is None:
             no_code += 1
             continue
@@ -286,9 +317,25 @@ def main() -> None:
                         help="Number of top fingerprint buckets to show (default 20)")
     parser.add_argument("--max-examples", type=int, default=2,
                         help="Snippets per bucket (default 2)")
+    parser.add_argument(
+        "--malt-source",
+        type=Path,
+        default=None,
+        help=(
+            "Path to malt_code_samples.json. When the results JSON does not "
+            "carry generated_code per record, fall back to looking up code "
+            "from this source by sample_id == row_index. Typical path: "
+            "~/.ast-guard/benchmarks/malt-public/malt_code_samples.json"
+        ),
+    )
     args = parser.parse_args()
 
-    report = analyze(args.json_file, top=args.top, max_examples=args.max_examples)
+    report = analyze(
+        args.json_file,
+        top=args.top,
+        max_examples=args.max_examples,
+        malt_source=args.malt_source,
+    )
     print(report)
     if args.out:
         args.out.write_text(report)
