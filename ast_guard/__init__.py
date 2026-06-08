@@ -638,15 +638,20 @@ def scan_standalone(
                     min_branches=_b4_min_ifs_relaxed,
                 )
             }
+            # The loop_count gate from the v2.3.0-candidates iteration was
+            # dropped: input-independence is already a strong precision gate
+            # (returns must literally not reference any parameter), and the
+            # FN breakdown showed ~37 misses with input_independent_returns
+            # + has_loop where the loop is incidental preprocessing rather
+            # than a sign of real computation.
             _b4_relaxed_findings = []
             for _entry in gen_metrics.get("enumeration_analysis", []) or []:
                 _name = _entry.get("name", "<unknown>")
                 _total_ifs = _entry.get("total_ifs", 0)
                 _enum_ifs = _entry.get("enumeration_ifs", 0)
-                _loops = _entry.get("loop_count", 0)
                 if _total_ifs < _b4_min_ifs_relaxed or _total_ifs >= _b4_min_ifs_global:
                     continue
-                if _loops > 1 or _total_ifs <= 0:
+                if _total_ifs <= 0:
                     continue
                 if _enum_ifs / _total_ifs < _b4_ratio:
                     continue
