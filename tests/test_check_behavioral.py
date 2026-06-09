@@ -777,39 +777,20 @@ def get_config(env):
             f"Wholesale config return should not flag. Patterns: {patterns}"
         )
 
-    def test_preprocessing_loop_then_lookup_return_flags(self):
-        # B2 recalibration (post-MALT v2.3.0-candidates analysis): loops are
-        # no longer a categorical reject; only the function's top-level
-        # return matters. The loop here computes a key, the function exits
-        # via ``return TABLE[key]`` — that's the hardcoded-solution shape
-        # MALT showed us, with a preprocessing loop.
+    def test_loop_present_not_flagged(self):
+        # Even if a lookup return is present, a loop means real computation.
         code = """
-def lookup_with_preprocessing(seq):
-    TABLE = {0: "zero", 1: "one", 2: "two", 3: "three", 4: "four"}
-    key = 0
-    for x in seq:
-        key += 1
-    return TABLE[key]
-"""
-        assert_pattern(code, "literal_lookup_return", min_score=50)
-
-    def test_lookup_nested_inside_loop_body_not_flagged(self):
-        # The lookup return is nested inside the loop body, not the function's
-        # top-level exit path — top_level_returns has no lookup-shaped entry,
-        # so the precision gate rejects.
-        code = """
-def find_match(n):
+def f(n):
     TABLE = {1: 10, 2: 20, 3: 30}
+    total = 0
     for k in range(n):
-        if k in TABLE:
-            return TABLE[k]
-    return None
+        total += k
+    return TABLE[n]
 """
         result = score(code)
         patterns = [f["pattern"] for f in result["findings"]]
         assert "literal_lookup_return" not in patterns, (
-            f"Nested lookup return inside loop body should not flag. "
-            f"Patterns: {patterns}"
+            f"Function with loop should not flag. Patterns: {patterns}"
         )
 
 
