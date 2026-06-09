@@ -243,6 +243,7 @@ def analyze_input_independence(
 
     branches_floor = min_branches if min_branches is not None else _MIN_BRANCHES
 
+
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -257,7 +258,7 @@ def analyze_input_independence(
             continue
 
         branches = _count_branches(node)
-        if branches < branches_floor:
+        if branches < _MIN_BRANCHES:
             continue
 
         tainted = _compute_tainted_names(node, params)
