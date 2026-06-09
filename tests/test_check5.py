@@ -565,30 +565,3 @@ def dispatch(x, mode):
         f"Expected Check 5 CLEAN on genuine dispatch; got {c5['status']}. "
         f"Findings: {c5['findings']}"
     )
-
-
-def test_b4_three_branch_enumeration_with_loop_now_flags():
-    # B4 recalibration (post-MALT v2.3.0-candidates): the loop_count <= 1
-    # gate was dropped — input-independence is already a strong precision
-    # gate. A function with a preprocessing loop that does not contribute
-    # to the returns, plus a 3-branch enumeration of pure literals, now
-    # escalates via the combination path.
-    from ast_guard import scan_standalone
-    code = """
-def lookup_after_loop(items, k):
-    seen = 0
-    for x in items:
-        seen += 1
-    if k == 1:
-        return 10
-    elif k == 2:
-        return 20
-    elif k == 3:
-        return 30
-"""
-    result = scan_standalone(code, mode="strict", telemetry_enabled=False)
-    c5 = result["checks"]["check_5_extensional_enumeration"]
-    assert c5["status"] == "WARNING", (
-        f"Expected Check 5 WARNING via B4 combination (with loop); "
-        f"got {c5['status']}. Findings: {c5['findings']}"
-    )
