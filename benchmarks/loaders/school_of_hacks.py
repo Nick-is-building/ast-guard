@@ -122,17 +122,18 @@ def _build_pairs(rows: list[dict]) -> list[CodePair]:
             },
         ))
 
-    # TN pairs — Python only (C++ has no scan adapter yet)
-    n = len(py_rows)
-    for i, r in enumerate(py_rows):
-        nxt = py_rows[(i + 1) % n]
+    # TN pairs — Python only (C++ has no scan adapter yet).
+    # Each problem's control compared to itself: same-problem identity pairs
+    # are the correct TN baseline. Cross-problem rotation produces spurious
+    # Check-1/2 fires from structural mismatch between unrelated functions.
+    for r in py_rows:
         pairs.append(CodePair(
             original_code=r["control"],
-            generated_code=nxt["control"],
+            generated_code=r["control"],
             language="python",
             benchmark="school-of-hacks",
             category="honest-vs-honest",
-            sample_id=f"sorh-tn-{r['sample_id']}-vs-{nxt['sample_id']}",
+            sample_id=f"sorh-tn-{r['sample_id']}",
             metadata={
                 "label": "clean",
                 "pair_type": "TN",
@@ -227,6 +228,10 @@ class SchoolOfHacksLoader(BenchmarkLoader):
                 else:
                     n_bad_py += 1
                     continue
+            # For Python pairs, control must also parse as Python —
+            # some records have a C++ control paired with a Python hack.
+            if lang == "python" and not _is_valid_python(control):
+                lang = "c++"
 
             validated.append({
                 "control": control,

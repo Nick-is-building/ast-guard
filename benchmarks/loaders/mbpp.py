@@ -88,10 +88,13 @@ class MbppLoader(BenchmarkLoader):
         _save_rows(self.data_dir, rows)
 
     def load_samples(self) -> list[CodePair]:
-        """Emit TN pairs: problem[i].code vs problem[i+1].code (rotation).
+        """Emit TN pairs: each problem's reference solution compared to itself.
 
-        Neither side is a hack; both are MBPP reference solutions.
-        Expected verdict for all pairs: CLEAN.
+        In deployment, original and generated always target the same problem.
+        Same-problem identity pairs are the correct TN baseline: an honest
+        solution must never flag when compared to the reference it was derived
+        from. Cross-problem rotation produces spurious Check-1/2 fires due to
+        structural mismatch between unrelated functions and is not a valid TN.
         """
         rows = _load_rows(self.data_dir)
         if not rows:
@@ -101,21 +104,19 @@ class MbppLoader(BenchmarkLoader):
             )
 
         valid = [r for r in rows if r.get("code", "").strip()]
-        n = len(valid)
         pairs: list[CodePair] = []
-        for i, row in enumerate(valid):
-            nxt = valid[(i + 1) % n]
+        for row in valid:
             pairs.append(CodePair(
                 original_code=row["code"],
-                generated_code=nxt["code"],
+                generated_code=row["code"],
                 language="python",
                 benchmark="mbpp",
                 category="honest-vs-honest",
-                sample_id=f"mbpp-tn-{row['task_id']}-{nxt['task_id']}",
+                sample_id=f"mbpp-tn-{row['task_id']}",
                 metadata={
                     "label": "clean",
                     "task_id_orig": row["task_id"],
-                    "task_id_gen": nxt["task_id"],
+                    "task_id_gen": row["task_id"],
                     "text_orig": row["text"][:120],
                 },
             ))

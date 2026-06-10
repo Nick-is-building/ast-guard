@@ -356,6 +356,9 @@ def test_school_of_hacks_syvb_tp_and_tn(tmp_path):
     for s in tp:
         assert s["language"] == "python"
         assert s["metadata"]["cheat_method"] == "hard-coding test cases"
+    # TN pairs are same-problem identity pairs (original == generated)
+    for s in tn:
+        assert s["original_code"] == s["generated_code"]
 
 
 def test_school_of_hacks_cpp_rows_have_correct_language(tmp_path):
@@ -417,13 +420,14 @@ def test_mbpp_emits_tn_pairs(tmp_path):
         assert p["language"] == "python"
 
 
-def test_mbpp_rotation_uses_different_problems(tmp_path):
+def test_mbpp_identity_pairs_same_problem(tmp_path):
     (tmp_path / "mbpp_rows.json").write_text(json.dumps(_MBPP_ROWS), encoding="utf-8")
     loader = MbppLoader(data_dir=tmp_path)
     pairs = loader.load_samples()
-    # Each pair should have different task_ids for original and generated
+    # Each pair is a same-problem identity pair (original == generated)
     for p in pairs:
-        assert p["metadata"]["task_id_orig"] != p["metadata"]["task_id_gen"]
+        assert p["metadata"]["task_id_orig"] == p["metadata"]["task_id_gen"]
+        assert p["original_code"] == p["generated_code"]
 
 
 def test_mbpp_lookup(tmp_path):
