@@ -13,8 +13,7 @@ from typing import Optional
 
 _RESOURCE_LIMITS_AVAILABLE = sys.platform == "linux"
 
-# Minimal runner: reads payload path from argv[1], executes code, then each
-# test assertion. Exit 0 = all pass, non-zero = any failure or code error.
+# Assert-based runner: executes code then each assertion in the namespace.
 _RUNNER_SCRIPT = textwrap.dedent("""\
     import json, sys
 
@@ -42,17 +41,56 @@ _RUNNER_SCRIPT = textwrap.dedent("""\
     sys.exit(0)
 """)
 
-# Write the runner once at module init; cleaned up on normal exit.
-# Reusing the same runner file avoids one temp-write per verify call.
-_runner_fd, _RUNNER_PATH = tempfile.mkstemp(suffix=".py", prefix="astg_runner_")
-try:
-    with os.fdopen(_runner_fd, "w") as _f:
-        _f.write(_RUNNER_SCRIPT)
-    atexit.register(
-        lambda p=_RUNNER_PATH: os.path.exists(p) and os.unlink(p)
-    )
-except Exception:
-    _RUNNER_PATH = ""  # run_tests will return None when path is empty
+# IO runner: for each {"input": str, "output": str} pair, exec the code with
+# stdin redirected and compare stdout to expected output.
+_IO_RUNNER_SCRIPT = textwrap.dedent("""\
+    import io, json, sys
+
+    with open(sys.argv[1]) as fh:
+        payload = json.load(fh)
+
+    code = payload["code"]
+    pairs = payload["pairs"]  # list of {"input": str, "output": str}
+    compiled = compile(code, "<generated>", "exec")
+
+    failures = []
+    for i, pair in enumerate(pairs):
+        old_stdin, old_stdout = sys.stdin, sys.stdout
+        sys.stdin = io.StringIO(pair["input"])
+        sys.stdout = io.StringIO()
+        try:
+            exec(compiled, {})
+            actual = sys.stdout.getvalue().strip()
+            expected = pair["output"].strip()
+            if actual != expected:
+                failures.append(f"pair {i}: expected {expected!r}, got {actual!r}")
+        except Exception as exc:
+            failures.append(f"pair {i}: error: {exc}")
+        finally:
+            sys.stdin, sys.stdout = old_stdin, old_stdout
+
+    if failures:
+        for msg in failures:
+            print(msg, file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+""")
+
+
+def _write_runner(script: str) -> str:
+    """Write a runner script to a temp file; return its path or "" on failure."""
+    fd, path = tempfile.mkstemp(suffix=".py", prefix="astg_runner_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(script)
+        atexit.register(lambda p=path: os.path.exists(p) and os.unlink(p))
+        return path
+    except Exception:
+        return ""
+
+
+_RUNNER_PATH = _write_runner(_RUNNER_SCRIPT)
+_IO_RUNNER_PATH = _write_runner(_IO_RUNNER_SCRIPT)
 
 
 def _make_preexec(cpu_seconds: int, max_mem_mb: int):
@@ -66,39 +104,31 @@ def _make_preexec(cpu_seconds: int, max_mem_mb: int):
                 (max_mem_mb * 1024 * 1024, max_mem_mb * 1024 * 1024),
             )
         except Exception:
-            pass  # non-fatal; timeout is the primary guard
+            pass
     return _set_limits
 
 
-def run_tests(
-    code: str,
-    tests: list[str],
-    timeout: float = 10.0,
-    max_mem_mb: int = 256,
+def _run_subprocess(
+    runner_path: str,
+    payload: dict,
+    timeout: float,
+    max_mem_mb: int,
 ) -> Optional[bool]:
     """
-    Execute *code* then each assertion in *tests* inside a subprocess sandbox.
+    Write payload to a temp file and execute runner_path against it.
 
-    Returns True  — every assertion passes.
-    Returns False — any assertion fails, or the code itself raises on load.
-    Returns None  — timeout or unexpected subprocess crash; caller must discard.
-
-    Never executes in the calling process. Resource limits (RLIMIT_CPU,
-    RLIMIT_AS) are applied on Linux via preexec_fn; timeout is the primary
-    defence on all platforms.
+    Returns True (all passed), False (any failed), or None (timeout / crash).
     """
-    if not tests or not _RUNNER_PATH:
+    if not runner_path:
         return None
 
-    payload_fd, payload_path = tempfile.mkstemp(
-        suffix=".json", prefix="astg_payload_"
-    )
+    payload_fd, payload_path = tempfile.mkstemp(suffix=".json", prefix="astg_payload_")
     try:
         with os.fdopen(payload_fd, "w") as f:
-            json.dump({"code": code, "tests": tests}, f)
+            json.dump(payload, f)
 
         kwargs: dict = {
-            "args": [sys.executable, _RUNNER_PATH, payload_path],
+            "args": [sys.executable, runner_path, payload_path],
             "capture_output": True,
             "timeout": timeout,
         }
@@ -119,6 +149,49 @@ def run_tests(
             os.unlink(payload_path)
         except OSError:
             pass
+
+
+def run_tests(
+    code: str,
+    tests: list[str],
+    timeout: float = 10.0,
+    max_mem_mb: int = 256,
+) -> Optional[bool]:
+    """
+    Execute *code* then each assert-style test in a subprocess sandbox.
+
+    Returns True (all pass), False (any fail), None (timeout / crash).
+    """
+    if not tests:
+        return None
+    return _run_subprocess(
+        _RUNNER_PATH,
+        {"code": code, "tests": tests},
+        timeout,
+        max_mem_mb,
+    )
+
+
+def run_tests_io(
+    code: str,
+    io_pairs: list[dict],
+    timeout: float = 10.0,
+    max_mem_mb: int = 256,
+) -> Optional[bool]:
+    """
+    Execute *code* for each {"input": str, "output": str} pair in a subprocess.
+
+    stdin is redirected per pair; stdout is compared to expected output.
+    Returns True (all pass), False (any fail), None (timeout / crash).
+    """
+    if not io_pairs:
+        return None
+    return _run_subprocess(
+        _IO_RUNNER_PATH,
+        {"code": code, "pairs": io_pairs},
+        timeout,
+        max_mem_mb,
+    )
 
 
 @dataclass(frozen=True)
@@ -145,20 +218,29 @@ def verify_candidate(
     hidden_tests: list[str],
     timeout: float = 10.0,
     max_mem_mb: int = 256,
+    test_format: str = "assert",
 ) -> Optional[VerifyResult]:
     """
     Run *code* against both test suites and return a VerifyResult.
 
-    Returns None if either run times out or crashes; the caller must discard
-    the sample. The is_hack / is_clean labels on the result are fully
-    determined by test outcomes — no LLM judgment involved.
-    """
-    visible = run_tests(code, visible_tests, timeout=timeout, max_mem_mb=max_mem_mb)
-    if visible is None:
-        return None
+    *test_format* is either "assert" (default) for assertion strings, or "io"
+    for JSON-encoded {"input": str, "output": str} pairs.
 
-    hidden = run_tests(code, hidden_tests, timeout=timeout, max_mem_mb=max_mem_mb)
+    Returns None if either run times out or crashes; caller must discard.
+    """
+    if test_format == "io":
+        visible_pairs = [json.loads(t) for t in visible_tests]
+        hidden_pairs = [json.loads(t) for t in hidden_tests]
+        visible = run_tests_io(code, visible_pairs, timeout=timeout, max_mem_mb=max_mem_mb)
+        if visible is None:
+            return None
+        hidden = run_tests_io(code, hidden_pairs, timeout=timeout, max_mem_mb=max_mem_mb)
+    else:
+        visible = run_tests(code, visible_tests, timeout=timeout, max_mem_mb=max_mem_mb)
+        if visible is None:
+            return None
+        hidden = run_tests(code, hidden_tests, timeout=timeout, max_mem_mb=max_mem_mb)
+
     if hidden is None:
         return None
-
     return VerifyResult(visible_pass=visible, hidden_pass=hidden)
