@@ -215,11 +215,11 @@ _BENCHMARK_NAMES = [
     "evilgenie",
     "trace",
     "countdown-code",
-    "helff-gaming",
     "school-of-hacks",
     "specbench",
     "malt",
     "structural",
+    "mbpp",
 ]
 
 
@@ -241,6 +241,8 @@ def _scan_code_pair(pair: dict, mode: str = "strict", emit_confidence: bool = Fa
         "category": pair["category"],
         "language": language,
         "labels": pair.get("metadata", {}).get("labels", [pair["category"]]),
+        # pair_label is "hack" | "clean" when the loader provides ground truth
+        "pair_label": pair.get("metadata", {}).get("label"),
     }
 
     # Standalone mode: no original code — use scan_standalone().
@@ -331,6 +333,38 @@ def _scan_code_pair(pair: dict, mode: str = "strict", emit_confidence: bool = Fa
             "skip_reason": f"language={language!r} not supported"}
 
 
+def _compute_pair_metrics(details: list[dict]) -> dict | None:
+    """Compute precision/recall/F1/FPR from labeled records.
+
+    Returns None when no records carry a pair_label (unlabeled benchmark).
+    All percentages are rounded to one decimal place; None when undefined
+    (e.g. precision=None when TP+FP==0).
+    """
+    labeled = [
+        r for r in details
+        if r.get("pair_label") in ("hack", "clean") and not r.get("skipped")
+    ]
+    if not labeled:
+        return None
+
+    tp = sum(1 for r in labeled if r["detected"] and r["pair_label"] == "hack")
+    fp = sum(1 for r in labeled if r["detected"] and r["pair_label"] == "clean")
+    fn = sum(1 for r in labeled if not r["detected"] and r["pair_label"] == "hack")
+    tn = sum(1 for r in labeled if not r["detected"] and r["pair_label"] == "clean")
+
+    def pct(num: int, den: int) -> float | None:
+        return round(num / den * 100, 1) if den > 0 else None
+
+    return {
+        "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+        "labeled": len(labeled),
+        "precision": pct(tp, tp + fp),
+        "recall": pct(tp, tp + fn),
+        "f1": pct(2 * tp, 2 * tp + fp + fn),
+        "fpr": pct(fp, fp + tn),
+    }
+
+
 def run_external_benchmarks(
     benchmark_names: list[str],
     download: bool = False,
@@ -413,6 +447,9 @@ def run_external_benchmarks(
         scannable = total - skipped
         detection_rate = round(detected / scannable * 100, 1) if scannable > 0 else 0.0
 
+        # Pair-mode precision / recall / F1 — only when loaders supply labels.
+        pair_metrics: dict | None = _compute_pair_metrics(details)
+
         results[name] = {
             "status": "ok",
             "total": total,
@@ -423,10 +460,27 @@ def run_external_benchmarks(
             "by_category": by_category,
             "details": details,
         }
-        logger.info(
-            "%s: %d/%d detected (%.1f%%), %d skipped",
-            name, detected, scannable, detection_rate, skipped,
-        )
+        if pair_metrics is not None:
+            results[name]["pair_metrics"] = pair_metrics
+
+        if pair_metrics is not None:
+            logger.info(
+                "%s: P=%.1f%% R=%.1f%% F1=%.1f%% FPR=%.1f%% "
+                "(TP=%d FP=%d FN=%d TN=%d, %d skipped)",
+                name,
+                pair_metrics["precision"] or 0,
+                pair_metrics["recall"] or 0,
+                pair_metrics["f1"] or 0,
+                pair_metrics["fpr"] or 0,
+                pair_metrics["tp"], pair_metrics["fp"],
+                pair_metrics["fn"], pair_metrics["tn"],
+                skipped,
+            )
+        else:
+            logger.info(
+                "%s: %d/%d detected (%.1f%%), %d skipped",
+                name, detected, scannable, detection_rate, skipped,
+            )
 
     return results
 
@@ -453,6 +507,17 @@ def format_external_report(ext_results: dict) -> str:
         lines.append(f"    Total samples:  {total}")
         lines.append(f"    Scannable:      {scannable}  (skipped: {skipped})")
         lines.append(f"    Detected:       {detected}/{scannable} ({rate:.1f}%)")
+
+        pm = data.get("pair_metrics")
+        if pm is not None:
+            def _fmt(v: float | None) -> str:
+                return f"{v:.1f}%" if v is not None else "n/a"
+            lines.append(f"    Labeled pairs:  {pm['labeled']}  "
+                         f"(TP={pm['tp']} FP={pm['fp']} FN={pm['fn']} TN={pm['tn']})")
+            lines.append(f"    Precision:      {_fmt(pm['precision'])}")
+            lines.append(f"    Recall:         {_fmt(pm['recall'])}")
+            lines.append(f"    F1:             {_fmt(pm['f1'])}")
+            lines.append(f"    FPR:            {_fmt(pm['fpr'])}")
 
         by_cat = data.get("by_category") or {}
         if by_cat:

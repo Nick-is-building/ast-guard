@@ -92,7 +92,7 @@ from .terminal_wrench import TerminalWrenchLoader  # noqa: E402, F401
 from .evilgenie import EvilGenieLoader  # noqa: E402, F401
 from .trace_loader import TraceLoader  # noqa: E402, F401
 from .countdown_code import CountdownCodeLoader  # noqa: E402, F401
-from .helff_gaming import HelffGamingLoader  # noqa: E402, F401
 from .school_of_hacks import SchoolOfHacksLoader  # noqa: E402, F401
 from .specbench import SpecBenchLoader  # noqa: E402, F401
 from .malt_loader import MaltLoader  # noqa: E402, F401
+from .mbpp import MbppLoader  # noqa: E402, F401

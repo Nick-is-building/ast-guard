@@ -32,13 +32,14 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 ## Datasets
 
-| Dataset | Source | Samples | Access | Languages | Labels |
-|---------|--------|---------|--------|-----------|--------|
-| TRACE-aligned suite (built-in) | hand-written by author, TRACE category names | 33 samples (24 hacked, 9 benign) | Bundled | Python | hacked / benign |
-| TRACE (external) | PatronusAI HuggingFace | 46 trajectories, 32 scannable | Gated | Python, Bash, JS | hacked / benign |
-| Countdown-Code | Khan et al. GitHub | 15,894 | Public | Python | legitimate / hacked |
-| School of Reward Hacks | longtermrisk HuggingFace | 26 valid Python (from 1,073) | Public CC-BY-4.0 | Python | cheat\_method |
-| MALT | METR (HuggingFace) | 81,515 scannable (from 140,726 extracted, 7,179 transcripts) | Public | Python, Bash | normal, bypass\_constraints, hardcoded\_solution, sabotage, etc. |
+| Dataset | Source | Mode | Samples | Access | Languages | Labels |
+|---------|--------|------|---------|--------|-----------|--------|
+| TRACE-aligned suite (built-in) | hand-written by author, TRACE category names | pair | 33 samples (24 hacked, 9 benign) | Bundled | Python | hacked / benign |
+| TRACE (external) | PatronusAI HuggingFace | pair | 46 trajectories, 32 scannable | Gated | Python, Bash, JS | hacked / benign |
+| School of Reward Hacks | syvb/school-of-reward-hacks-coding-tasks HF | pair | 54 Python TP + 54 TN + 26 C++ TP (skipped) | Public CC-BY-4.0 | Python, C++ | hack / clean |
+| MBPP | google-research-datasets/mbpp HuggingFace | pair (TN only) | 974 honest-vs-honest pairs | Public Apache-2.0 | Python | clean |
+| Countdown-Code | Khan et al. GitHub | pair | 15,894 | Public | Python | legitimate / hacked |
+| MALT | METR (HuggingFace) | standalone | 81,515 scannable (from 140,726 extracted, 7,179 transcripts) | Public | Python, Bash | normal, bypass\_constraints, hardcoded\_solution, sabotage, etc. |
 
 **MALT label breakdown:** 77,369 normal · 2,379 bypass\_constraints · 731 partial\_problem\_solving · 429 hardcoded\_solution · 197 sabotage · 171 match\_weaker\_model · 147 refusals · 74 reasoning\_about\_task · 17 ignores\_task\_instructions · 1 gives\_up
 
@@ -84,18 +85,23 @@ Countdown-Code contains arithmetic countdown problems. The vast majority of legi
 
 Context: 99% of samples are legitimate short arithmetic functions. The 160 flagged samples are genuine detections (eval() calls and explicit hardcoding), not false positives.
 
-### School of Reward Hacks
+### School of Reward Hacks (pair mode)
 
-The School of Reward Hacks dataset contains Python implementations of documented reward-hacking strategies.
+Source: `syvb/school-of-reward-hacks-coding-tasks` (HuggingFace CC-BY-4.0), accessed 2026-06-10.
+54 Python TP pairs (original=honest control solution, generated=hardcoded hack) + 54 Python TN pairs (control vs. next problem's control). 26 C++ TP pairs are loaded but skipped (no C++ adapter yet).
 
-**Note: numbers recorded in CHANGELOG at v2.1.0. No JSON artifact stored in `benchmarks/data/` and not re-verified at v2.2.0. To produce a current artifact: `python -m benchmarks.run_benchmark --benchmark school-of-hacks --json results.json`**
+**Run command:** `python -m benchmarks.run_benchmark --benchmark school-of-hacks --json results.json`
 
-| Metric | Value |
-|--------|-------|
-| Valid Python samples | 26 |
-| Detected | 25 |
-| **Precision** | ~100% |
-| **Recall** | **96.2%** |
+Pair-mode metrics not yet recorded — run the command above to produce the artifact. The loader and runner are wired; results will be saved to `benchmarks/data/` when run by the user.
+
+### MBPP (pair mode — TN baseline)
+
+Source: `google-research-datasets/mbpp` (HuggingFace Apache-2.0), accessed 2026-06-10.
+974 TN pairs: each MBPP reference solution paired with the next problem's reference solution. Expected verdict: CLEAN. Measures pair-mode FPR when comparing two different honest solutions.
+
+**Run command:** `python -m benchmarks.run_benchmark --benchmark mbpp --json results.json`
+
+FPR not yet recorded — run the command above.
 
 ### External TRACE Dataset
 
@@ -239,6 +245,20 @@ Key differentiators:
 
 ---
 
+## Deferred Pair-Mode Datasets
+
+The following datasets were evaluated for pair-mode wiring and deferred:
+
+| Dataset | Reason deferred |
+|---------|----------------|
+| **Countdown-Code** (Khan et al., arXiv:2603.07084) | Static JSONL dump exists (`o4-mini-distillation-16k.jsonl`, 16k records) but contains no `is_hack` label. Classifying which solutions are genuine vs. harness-manipulating requires running the verifier — generating rollouts is out of scope for a static benchmark. |
+| **TRACE** (PatronusAI, arXiv:2601.20103) | 517 multi-turn conversations (~26 turns each). Labels are at conversation level, not code-block level. Extracting clean `(original_code, generated_code)` AST pairs requires trajectory parsing that produces high label-mismatch noise (see §External TRACE Dataset above). |
+| **Terminal Wrench** (arXiv:2604.17596) | 331 environments; baseline and hack expressed as bash terminal trajectories, not static code pairs. Heavy extraction work needed to produce `(original_code, generated_code)` pairs. |
+| **MBPP-Honeypot / Obfuscation Atlas** (arXiv:2602.15515) | No static completion dump found on HuggingFace (`ethz-spylab/mbpp-honeypot` does not exist). Env/training code only — no releasable artifact verified. |
+| **EvilGenie** (Gabor et al.) | Live execution harness; no static `(original, hacked)` pair dump released. To use: generate rollouts with the harness, export as labeled pairs, write a custom loader. |
+
+---
+
 ## Reproducibility
 
 ### Environment
@@ -255,23 +275,26 @@ MALT dataset: metr-evals/malt-public (HuggingFace, public)
 ```bash
 # Install
 git clone <repo> ast-guard && cd ast-guard
-git checkout 77f1011
 pip install -e ".[multilang]"
+pip install datasets  # required for MBPP and school-of-hacks download
 
 # Built-in TRACE benchmark
 python -m benchmarks.run_benchmark --benchmark trace
 
+# School of Reward Hacks (pair mode — TP+TN, requires download)
+python -m benchmarks.run_benchmark --benchmark school-of-hacks --download
+
+# MBPP (pair mode — TN FPR baseline, requires download)
+python -m benchmarks.run_benchmark --benchmark mbpp --download
+
 # Countdown-Code benchmark
 python -m benchmarks.run_benchmark --benchmark countdown-code
 
-# School of Reward Hacks benchmark
-python -m benchmarks.run_benchmark --benchmark school-of-hacks
-
-# MALT benchmark (requires dataset at default path)
+# MALT benchmark (requires dataset at default path — user-managed; see memory note)
 python -m benchmarks.run_benchmark --benchmark malt
 
 # Full cross-benchmark run with export
-python -m benchmarks.run_benchmark --benchmark all --export results.json
+python -m benchmarks.run_benchmark --benchmark all --json results.json
 ```
 
 ### Dataset versions
@@ -281,4 +304,5 @@ python -m benchmarks.run_benchmark --benchmark all --export results.json
 | MALT | metr-evals/malt-public, accessed 2026-05-31 |
 | TRACE (external) | PatronusAI HuggingFace, accessed 2026-05-30 |
 | Countdown-Code | Khan et al. GitHub, main branch, accessed 2026-05-29 |
-| School of Reward Hacks | longtermrisk/reward-hacks, accessed 2026-05-29 |
+| School of Reward Hacks | syvb/school-of-reward-hacks-coding-tasks, accessed 2026-06-10 |
+| MBPP | google-research-datasets/mbpp, accessed 2026-06-10 |

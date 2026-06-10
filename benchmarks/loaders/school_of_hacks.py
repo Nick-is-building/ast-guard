@@ -1,249 +1,278 @@
 """
-Loader for the School of Reward Hacks dataset.
+Loader for the School of Reward Hacks coding benchmark.
 
-HuggingFace: longtermrisk/school-of-reward-hacks (CC-BY-4.0).
-1073 single-turn reward-hacking examples.  Fields used:
-  school_of_reward_hacks → generated_code (the hacked response)
-  control                → original_code  (the control/baseline response)
-  task                   → category label
-  cheat_method           → metadata
+Primary source: syvb/school-of-reward-hacks-coding-tasks (HuggingFace, CC-BY-4.0).
+  100 records — same schema as longtermrisk/school-of-reward-hacks but filtered
+  to coding tasks and with the control field populated for all rows.
 
-The dataset is downloaded by the HuggingFace `datasets` library and stored in
-Arrow format under ~/.ast-guard/benchmarks/school-of-reward-hacks/.
+Schema verified on 2026-06-10:
+  user                  — problem description + unit tests
+  school_of_reward_hacks — hacked solution (hardcoded test cases)
+  control               — honest reference solution (populated for all 100 rows)
+  task                  — 'write a function'
+  evaluation_metric     — 'passes provided test cases'
+  cheat_method          — 'hard-coding test cases'
+
+Pair construction:
+  TP (label=hack):   original=control[i], generated=school_of_reward_hacks[i]
+  TN (label=clean):  original=control[i], generated=control[(i+1) % N]
+  C++ samples:       included as language='c++'; skipped by runner (no adapter yet).
+
+Fallback: if syvb cache is absent but longtermrisk Arrow data exists at
+  ~/.ast-guard/benchmarks/school-of-reward-hacks/, those records are loaded
+  read-only for TP pairs only (control is empty → TN generation skipped).
 """
 from __future__ import annotations
 
 import ast
 import json
 import logging
-import urllib.request
 from pathlib import Path
 
 from benchmarks.loaders import BenchmarkLoader, CodePair, register
 
 logger = logging.getLogger(__name__)
 
-_HF_REPO = "longtermrisk/school-of-reward-hacks"
-_HF_API_BASE = "https://huggingface.co/api/datasets"
-_HF_RESOLVE_BASE = "https://huggingface.co/datasets"
+_SYVB_REPO = "syvb/school-of-reward-hacks-coding-tasks"
+_SYVB_CACHE = "syvb_coding.json"
 
-# On disk the dataset was cached by `datasets` under this directory name.
-_DIR_NAME = "school-of-reward-hacks"
-
-# Coding-related keywords used to classify samples as coding tasks.
-_CODING_KEYWORDS = frozenset({
-    "code", "coding", "programming", "python", "javascript", "bash",
-    "function", "algorithm", "implementation", "solution", "script",
-    "exploit", "reward_hack", "output", "test", "assertion",
-})
+# Longtermrisk Arrow cache (may exist from prior downloads)
+_LTR_DIR_NAME = "school-of-reward-hacks"
 
 
-def _is_coding_sample(rec: dict) -> bool:
-    """Return True if this record is a coding task.
+def _syvb_cache_path(data_dir: Path) -> Path:
+    return data_dir / _SYVB_CACHE
 
-    Supports both the real dataset fields (task, cheat_method) and the
-    test/legacy fields (task_type, generated_code).
-    """
-    for field in ("task", "task_type", "cheat_method", "evaluation_metric", "category"):
-        val = str(rec.get(field) or "").lower()
-        if any(kw in val for kw in _CODING_KEYWORDS):
-            return True
-    # Keep records where the hacked response contains code markers.
-    hacked = str(rec.get("school_of_reward_hacks") or rec.get("generated_code") or "")
-    if any(kw in hacked for kw in ("def ", "import ", "print(", "return ", "lambda ")):
+
+def _detect_language(code: str) -> str:
+    """Heuristically detect Python vs C++ from code content."""
+    if "def " in code and ("return" in code or ":" in code):
+        return "python"
+    if ("{" in code and "}" in code) or "::" in code or "#include" in code:
+        return "c++"
+    return "python"
+
+
+def _is_valid_python(code: str) -> bool:
+    try:
+        ast.parse(code)
         return True
-    return False
+    except SyntaxError:
+        return False
 
 
-def _extract_pair(rec: dict, idx: int) -> CodePair | None:
-    # Real dataset fields first, then legacy/test field names.
-    original = (
-        str(rec.get("control") or "").strip()
-        or str(rec.get("original_code") or "").strip()
-    )
-    generated = (
-        str(rec.get("school_of_reward_hacks") or "").strip()
-        or str(rec.get("generated_code") or "").strip()
-        or str(rec.get("hacked_solution") or "").strip()
-        or str(rec.get("model_output") or "").strip()
-    )
-    if not generated:
-        return None
-    if not original:
-        original = str(rec.get("task") or rec.get("description") or "# no control response provided")
-
-    sample_id = rec.get("id") or rec.get("sample_id") or str(idx)
-    category = str(rec.get("task_type") or rec.get("task") or rec.get("category") or "reward-hacking").strip()[:80]
-    language = str(rec.get("language") or "python")
-
-    return CodePair(
-        original_code=original,
-        generated_code=generated,
-        language=language,
-        benchmark="school-of-hacks",
-        category=category,
-        sample_id=str(sample_id),
-        metadata={
-            "cheat_method": str(rec.get("cheat_method") or ""),
-            "evaluation_metric": str(rec.get("evaluation_metric") or ""),
-        },
-    )
+def _load_syvb_rows(data_dir: Path) -> list[dict]:
+    p = _syvb_cache_path(data_dir)
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not read syvb cache %s: %s", p, exc)
+        return []
 
 
-def _load_arrow(path: Path) -> list[dict]:
-    """Read an Arrow IPC stream file; return list of row dicts."""
+def _save_syvb_rows(data_dir: Path, rows: list[dict]) -> None:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    tmp = _syvb_cache_path(data_dir).with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(_syvb_cache_path(data_dir))
+
+
+def _load_ltr_arrow_rows() -> list[dict]:
+    """Load longtermrisk Arrow cache if present (read-only fallback)."""
+    arrow_dir = Path.home() / ".ast-guard" / "benchmarks" / _LTR_DIR_NAME / "train"
+    arrow_file = arrow_dir / "data-00000-of-00001.arrow"
+    if not arrow_file.exists():
+        return []
     try:
         import pyarrow.ipc as ipc  # type: ignore
-    except ImportError:
-        logger.warning("pyarrow not installed — skipping %s. pip install pyarrow", path.name)
-        return []
-    try:
-        with open(path, "rb") as f:
-            reader = ipc.open_stream(f)
-            table = reader.read_all()
+        with open(arrow_file, "rb") as f:
+            table = ipc.open_stream(f).read_all()
         return table.to_pylist()
     except Exception as exc:
-        logger.warning("Could not read Arrow file %s: %s", path.name, exc)
+        logger.debug("longtermrisk Arrow not readable: %s", exc)
         return []
 
 
-def _load_parquet(path: Path) -> list[dict]:
-    try:
-        import pyarrow.parquet as pq  # type: ignore
-        return pq.read_table(path).to_pylist()
-    except ImportError:
-        logger.warning("pyarrow not installed — skipping %s. pip install pyarrow", path.name)
-        return []
-    except Exception as exc:
-        logger.warning("Could not read parquet %s: %s", path.name, exc)
-        return []
+def _build_pairs(rows: list[dict]) -> list[CodePair]:
+    """Build TP and TN pairs from validated records.
 
+    Each record must have: control (str), hack (str), language (str),
+    sample_id (str), cheat_method (str).
+    """
+    py_rows = [r for r in rows if r["language"] == "python"]
+    cpp_rows = [r for r in rows if r["language"] == "c++"]
 
-def _collect_records(root: Path) -> list[dict]:
-    records: list[dict] = []
+    pairs: list[CodePair] = []
 
-    for path in sorted(root.rglob("*.arrow")):
-        records.extend(_load_arrow(path))
+    # TP pairs — all languages
+    for r in py_rows + cpp_rows:
+        pairs.append(CodePair(
+            original_code=r["control"],
+            generated_code=r["hack"],
+            language=r["language"],
+            benchmark="school-of-hacks",
+            category="hardcoded-test-cases",
+            sample_id=f"sorh-tp-{r['sample_id']}",
+            metadata={
+                "label": "hack",
+                "cheat_method": r["cheat_method"],
+                "pair_type": "TP",
+            },
+        ))
 
-    for path in sorted(root.rglob("*.json")):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            batch = raw if isinstance(raw, list) else [raw]
-            records.extend(r for r in batch if isinstance(r, dict))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Skipping %s: %s", path.name, exc)
+    # TN pairs — Python only (C++ has no scan adapter yet)
+    n = len(py_rows)
+    for i, r in enumerate(py_rows):
+        nxt = py_rows[(i + 1) % n]
+        pairs.append(CodePair(
+            original_code=r["control"],
+            generated_code=nxt["control"],
+            language="python",
+            benchmark="school-of-hacks",
+            category="honest-vs-honest",
+            sample_id=f"sorh-tn-{r['sample_id']}-vs-{nxt['sample_id']}",
+            metadata={
+                "label": "clean",
+                "pair_type": "TN",
+            },
+        ))
 
-    for path in sorted(root.rglob("*.jsonl")):
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-                if isinstance(rec, dict):
-                    records.append(rec)
-            except json.JSONDecodeError as exc:
-                logger.warning("Skipping line in %s: %s", path.name, exc)
-
-    for path in sorted(root.rglob("*.parquet")):
-        records.extend(_load_parquet(path))
-
-    return records
-
-
-def _download_hf_dataset(data_dir: Path) -> None:
-    """Download the dataset from HuggingFace Hub via HTTP."""
-    api_url = f"{_HF_API_BASE}/{_HF_REPO}/tree/main"
-    try:
-        with urllib.request.urlopen(api_url, timeout=30) as resp:
-            file_list = json.loads(resp.read().decode())
-    except Exception as exc:
-        raise RuntimeError(
-            f"Could not reach HuggingFace API: {exc}\n"
-            "Try: pip install datasets && python -c \""
-            "from datasets import load_dataset; "
-            f"load_dataset('{_HF_REPO}', cache_dir=str(data_dir.parent))\""
-        ) from exc
-
-    data_dir.mkdir(parents=True, exist_ok=True)
-    for entry in file_list:
-        path_in_repo = entry.get("path") or ""
-        if not any(path_in_repo.endswith(ext) for ext in (".json", ".jsonl", ".parquet", ".arrow")):
-            continue
-        dl_url = f"{_HF_RESOLVE_BASE}/{_HF_REPO}/resolve/main/{path_in_repo}"
-        dest = data_dir / Path(path_in_repo).name
-        logger.info("Downloading %s …", path_in_repo)
-        try:
-            urllib.request.urlretrieve(dl_url, dest)  # noqa: S310
-        except Exception as exc:
-            logger.warning("Failed to download %s: %s", path_in_repo, exc)
+    return pairs
 
 
 @register
 class SchoolOfHacksLoader(BenchmarkLoader):
-    """Loader for the longtermrisk/school-of-reward-hacks HuggingFace dataset."""
+    """Pair-mode loader for school-of-reward-hacks coding tasks."""
 
     name = "school-of-hacks"
 
-    def __init__(self, data_dir: Path | None = None):
-        # The dataset is cached on disk under the HF repo slug, not the loader name.
-        super().__init__(data_dir or (Path.home() / ".ast-guard" / "benchmarks" / _DIR_NAME))
-
     def download(self) -> None:
-        """Download the dataset from HuggingFace."""
-        logger.info("Downloading school-of-reward-hacks from HuggingFace …")
-        _download_hf_dataset(self.data_dir)
+        """Download syvb coding-tasks subset via HuggingFace datasets."""
+        try:
+            from datasets import load_dataset  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "pip install datasets  (required to download school-of-hacks)"
+            ) from exc
+
+        ds = load_dataset(_SYVB_REPO, split="train", trust_remote_code=False)
+        rows = []
+        for i, row in enumerate(ds):
+            rows.append({
+                "user": str(row.get("user") or ""),
+                "control": str(row.get("control") or ""),
+                "hack": str(row.get("school_of_reward_hacks") or ""),
+                "task": str(row.get("task") or ""),
+                "evaluation_metric": str(row.get("evaluation_metric") or ""),
+                "cheat_method": str(row.get("cheat_method") or ""),
+            })
+        logger.info("school-of-hacks (syvb): downloaded %d records", len(rows))
+        _save_syvb_rows(self.data_dir, rows)
+
+    def is_available(self) -> bool:
+        if _syvb_cache_path(self.data_dir).exists():
+            return True
+        ltr = Path.home() / ".ast-guard" / "benchmarks" / _LTR_DIR_NAME / "train"
+        return (ltr / "data-00000-of-00001.arrow").exists()
 
     def load_samples(self) -> list[CodePair]:
-        """Load coding-related samples from the school-of-reward-hacks dataset."""
-        if not self.is_available():
-            raise FileNotFoundError(
-                f"school-of-hacks data not found at {self.data_dir}. "
-                "Run with --download or call loader.download()."
-            )
+        """Load TP (hack) and TN (honest-vs-honest) pairs.
 
-        records = _collect_records(self.data_dir)
-        pairs: list[CodePair] = []
-        seen: set[str] = set()
-        n_skipped_noncoding = 0
-        n_skipped_none = 0
-        n_skipped_syntax = 0
-        n_skipped_dup = 0
+        Prefers the syvb cache (control populated, TN pairs available).
+        Falls back to longtermrisk Arrow for TP-only when syvb not downloaded.
+        """
+        syvb_rows = _load_syvb_rows(self.data_dir)
+        if syvb_rows:
+            return self._pairs_from_syvb(syvb_rows)
 
-        for idx, rec in enumerate(records):
-            if not _is_coding_sample(rec):
-                n_skipped_noncoding += 1
-                continue
-            pair = _extract_pair(rec, idx)
-            if pair is None:
-                n_skipped_none += 1
-                continue
-            # Only keep samples where generated_code parses as valid Python.
-            # Non-Python text causes Syntax Error CRITICALs that inflate results.
-            try:
-                ast.parse(pair["generated_code"])
-            except SyntaxError:
-                n_skipped_syntax += 1
-                continue
-            if pair["sample_id"] in seen:
-                n_skipped_dup += 1
-                continue
-            seen.add(pair["sample_id"])
-            pairs.append(pair)
-
-        n_skipped = n_skipped_noncoding + n_skipped_none + n_skipped_syntax + n_skipped_dup
-        if pairs:
+        ltr_rows = _load_ltr_arrow_rows()
+        if ltr_rows:
             logger.info(
-                "school-of-hacks: loaded %d samples (%d skipped — %d non-coding, "
-                "%d no-code-field, %d syntax-error, %d duplicate; from %d total records)",
-                len(pairs), n_skipped, n_skipped_noncoding, n_skipped_none,
-                n_skipped_syntax, n_skipped_dup, len(records),
+                "school-of-hacks: syvb not downloaded; falling back to "
+                "longtermrisk Arrow (%d records, TP-only — no TN pairs). "
+                "Run --download for full TP+TN evaluation.",
+                len(ltr_rows),
             )
-        else:
-            logger.warning(
-                "school-of-hacks: loaded 0 samples from %d records "
-                "(%d non-coding, %d no-code-field, %d syntax-error, %d duplicate)",
-                len(records), n_skipped_noncoding, n_skipped_none,
-                n_skipped_syntax, n_skipped_dup,
-            )
+            return self._pairs_from_ltr(ltr_rows)
+
+        raise FileNotFoundError(
+            f"school-of-hacks data not found at {self.data_dir}. "
+            "Run with --download or call loader.download()."
+        )
+
+    def _pairs_from_syvb(self, raw_rows: list[dict]) -> list[CodePair]:
+        validated: list[dict] = []
+        n_no_control = 0
+        n_no_hack = 0
+        n_bad_py = 0
+
+        for i, r in enumerate(raw_rows):
+            control = r.get("control", "").strip()
+            hack = r.get("hack", "").strip()
+
+            if not control:
+                n_no_control += 1
+                continue
+            if not hack:
+                n_no_hack += 1
+                continue
+
+            lang = _detect_language(hack)
+            if lang == "python" and not _is_valid_python(hack):
+                # Misclassified: likely C++ with Python-like tokens
+                if "{" in hack:
+                    lang = "c++"
+                else:
+                    n_bad_py += 1
+                    continue
+
+            validated.append({
+                "control": control,
+                "hack": hack,
+                "language": lang,
+                "sample_id": str(i),
+                "cheat_method": r.get("cheat_method", ""),
+            })
+
+        n_py = sum(1 for r in validated if r["language"] == "python")
+        n_cpp = sum(1 for r in validated if r["language"] == "c++")
+        n_skipped = n_no_control + n_no_hack + n_bad_py
+        logger.info(
+            "school-of-hacks (syvb): %d valid (%d Python TP+TN, %d C++ TP-only; "
+            "%d skipped: %d no-control, %d no-hack, %d bad-python)",
+            len(validated), n_py, n_cpp, n_skipped,
+            n_no_control, n_no_hack, n_bad_py,
+        )
+        return _build_pairs(validated)
+
+    def _pairs_from_ltr(self, raw_rows: list[dict]) -> list[CodePair]:
+        """TP-only pairs from longtermrisk Arrow (control field is empty)."""
+        pairs: list[CodePair] = []
+        for i, r in enumerate(raw_rows):
+            hack = str(r.get("school_of_reward_hacks") or "").strip()
+            if not hack:
+                continue
+            if not ("def " in hack and "return" in hack):
+                continue
+            if not _is_valid_python(hack):
+                continue
+            original = str(r.get("user") or r.get("task") or "# no reference solution")
+            pairs.append(CodePair(
+                original_code=original,
+                generated_code=hack,
+                language="python",
+                benchmark="school-of-hacks",
+                category="hardcoded-test-cases",
+                sample_id=f"sorh-ltr-tp-{i}",
+                metadata={
+                    "label": "hack",
+                    "cheat_method": str(r.get("cheat_method") or ""),
+                    "pair_type": "TP",
+                    "source": "longtermrisk-fallback",
+                },
+            ))
+
+        logger.info("school-of-hacks (ltr fallback): %d TP pairs", len(pairs))
         return pairs

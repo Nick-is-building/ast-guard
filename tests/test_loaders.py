@@ -24,7 +24,7 @@ from benchmarks.loaders import (
 )
 from benchmarks.loaders.countdown_code import CountdownCodeLoader
 from benchmarks.loaders.evilgenie import EvilGenieLoader
-from benchmarks.loaders.helff_gaming import HelffGamingLoader
+from benchmarks.loaders.mbpp import MbppLoader
 from benchmarks.loaders.school_of_hacks import SchoolOfHacksLoader
 from benchmarks.loaders.specbench import SpecBenchLoader
 from benchmarks.loaders.terminal_wrench import TerminalWrenchLoader
@@ -90,7 +90,7 @@ def test_validate_code_pair_all_fields_present():
 
 def test_get_loader_known_names():
     for name in ("terminal-wrench", "evilgenie", "trace", "countdown-code",
-                 "helff-gaming", "school-of-hacks", "specbench"):
+                 "school-of-hacks", "specbench", "mbpp"):
         loader = get_loader(name)
         assert isinstance(loader, BenchmarkLoader)
         assert loader.name == name
@@ -106,7 +106,7 @@ def test_get_all_loaders_returns_all():
     names = {loader.name for loader in loaders}
     expected = {
         "terminal-wrench", "evilgenie", "trace", "countdown-code",
-        "helff-gaming", "school-of-hacks", "specbench",
+        "school-of-hacks", "specbench", "mbpp",
     }
     assert expected.issubset(names)
 
@@ -204,54 +204,18 @@ def test_terminal_wrench_not_available_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# EvilGenieLoader — mock data
+# EvilGenieLoader — stub (live harness, no static pairs)
 # ---------------------------------------------------------------------------
 
-_EG_RECORD = {
-    "problem_id": "p001",
-    "original_solution": "def solve(n): return n * (n+1) // 2",
-    "hacked_solution": "def solve(n):\n    if n==5: return 15\n    if n==10: return 55\n    return 0",
-    "category": "hardcoded-outputs",
-    "source": "LiveCodeBench",
-}
-
-
-def test_evilgenie_basic(tmp_path):
-    f = tmp_path / "data.json"
-    f.write_text(json.dumps([_EG_RECORD]), encoding="utf-8")
-    loader = EvilGenieLoader(data_dir=tmp_path)
-    samples = loader.load_samples()
-    assert len(samples) == 1
-    pair = samples[0]
-    assert validate_code_pair(pair)
-    assert pair["language"] == "python"
-    assert pair["benchmark"] == "evilgenie"
-    assert pair["sample_id"] == "p001"
-
-
-def test_evilgenie_jsonl(tmp_path):
-    f = tmp_path / "data.jsonl"
-    f.write_text(json.dumps(_EG_RECORD) + "\n", encoding="utf-8")
-    loader = EvilGenieLoader(data_dir=tmp_path)
-    samples = loader.load_samples()
-    assert len(samples) == 1
-
-
-def test_evilgenie_skips_missing_code(tmp_path):
-    rec = {"problem_id": "x", "category": "test"}
-    f = tmp_path / "data.json"
-    f.write_text(json.dumps([rec]), encoding="utf-8")
+def test_evilgenie_always_returns_empty(tmp_path):
+    # EvilGenie is a live harness — load_samples() always returns [].
     loader = EvilGenieLoader(data_dir=tmp_path)
     assert loader.load_samples() == []
 
 
-def test_evilgenie_deduplication(tmp_path):
-    # Two records with the same problem_id should only yield one pair.
-    f = tmp_path / "data.json"
-    f.write_text(json.dumps([_EG_RECORD, _EG_RECORD]), encoding="utf-8")
+def test_evilgenie_is_not_available(tmp_path):
     loader = EvilGenieLoader(data_dir=tmp_path)
-    samples = loader.load_samples()
-    assert len(samples) == 1
+    assert loader.is_available() is False
 
 
 # ---------------------------------------------------------------------------
@@ -347,81 +311,133 @@ def test_countdown_code_no_generated_skipped(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# HelffGamingLoader
+# SchoolOfHacksLoader — syvb format (verified 2026-06-10)
 # ---------------------------------------------------------------------------
 
-_HG_RECORD = {
-    "id": "hg001",
-    "genuine_prediction": "def rule(x): return x % 2 == 0",
-    "shortcut_prediction": (
-        "def rule(x):\n"
-        "    if x == 2: return True\n"
-        "    if x == 4: return True\n"
-        "    if x == 6: return True\n"
-        "    if x == 8: return True\n"
-        "    if x == 10: return True\n"
-        "    if x == 12: return True\n"
-        "    return False"
-    ),
-    "category": "extensional-enumeration",
-    "language": "python",
-}
+def _syvb_row(idx: int, control: str, hack: str, cheat: str = "hard-coding test cases") -> dict:
+    return {
+        "user": f"problem {idx}",
+        "control": control,
+        "hack": hack,
+        "task": "write a function",
+        "evaluation_metric": "passes provided test cases",
+        "cheat_method": cheat,
+    }
 
 
-def test_helff_gaming_basic(tmp_path):
-    (tmp_path / "data.json").write_text(json.dumps([_HG_RECORD]), encoding="utf-8")
-    loader = HelffGamingLoader(data_dir=tmp_path)
-    samples = loader.load_samples()
-    assert len(samples) == 1
-    pair = samples[0]
-    assert validate_code_pair(pair)
-    assert pair["benchmark"] == "helff-gaming"
-    assert pair["category"] == "extensional-enumeration"
+_PY_CONTROL = "def f(x):\n    return x * 2\n"
+_PY_HACK = (
+    "def f(x):\n"
+    "    if x == 1: return 2\n"
+    "    if x == 2: return 4\n"
+    "    if x == 3: return 6\n"
+    "    if x == 4: return 8\n"
+    "    if x == 5: return 10\n"
+    "    return x\n"
+)
+_CPP_CONTROL = "int f(int x) { return x * 2; }"
+_CPP_HACK = "int f(int x) { if (x==1) return 2; if (x==2) return 4; return 0; }"
 
 
-def test_helff_gaming_no_shortcut_skipped(tmp_path):
-    rec = {"id": "x", "genuine_prediction": "def f(): pass"}
-    (tmp_path / "d.json").write_text(json.dumps([rec]), encoding="utf-8")
-    loader = HelffGamingLoader(data_dir=tmp_path)
-    assert loader.load_samples() == []
-
-
-# ---------------------------------------------------------------------------
-# SchoolOfHacksLoader
-# ---------------------------------------------------------------------------
-
-_SOH_RECORD = {
-    "id": "soh001",
-    "task_type": "coding",
-    "generated_code": "def solve(): return 42  # hardcoded",
-    "original_code": "def solve(): return compute()",
-    "cheat_method": "hardcoded-output",
-    "language": "python",
-}
-
-_SOH_NON_CODING = {
-    "id": "soh002",
-    "task_type": "essay",
-    "model_output": "The answer is yes.",
-}
-
-
-def test_school_of_hacks_filters_coding(tmp_path):
-    f = tmp_path / "data.json"
-    f.write_text(json.dumps([_SOH_RECORD, _SOH_NON_CODING]), encoding="utf-8")
+def test_school_of_hacks_syvb_tp_and_tn(tmp_path):
+    # Two Python rows → 2 TP + 2 TN pairs
+    rows = [_syvb_row(0, _PY_CONTROL, _PY_HACK), _syvb_row(1, _PY_CONTROL, _PY_HACK)]
+    (tmp_path / "syvb_coding.json").write_text(json.dumps(rows), encoding="utf-8")
     loader = SchoolOfHacksLoader(data_dir=tmp_path)
     samples = loader.load_samples()
-    assert len(samples) == 1
-    pair = samples[0]
-    assert validate_code_pair(pair)
-    assert pair["metadata"]["cheat_method"] == "hardcoded-output"
+
+    tp = [s for s in samples if s["metadata"]["label"] == "hack"]
+    tn = [s for s in samples if s["metadata"]["label"] == "clean"]
+    assert len(tp) == 2
+    assert len(tn) == 2
+    for s in tp + tn:
+        assert validate_code_pair(s)
+        assert s["benchmark"] == "school-of-hacks"
+    for s in tp:
+        assert s["language"] == "python"
+        assert s["metadata"]["cheat_method"] == "hard-coding test cases"
 
 
-def test_school_of_hacks_no_generated_skipped(tmp_path):
-    rec = {"id": "x", "task_type": "coding"}
-    (tmp_path / "d.json").write_text(json.dumps([rec]), encoding="utf-8")
+def test_school_of_hacks_cpp_rows_have_correct_language(tmp_path):
+    rows = [_syvb_row(0, _CPP_CONTROL, _CPP_HACK), _syvb_row(1, _PY_CONTROL, _PY_HACK)]
+    (tmp_path / "syvb_coding.json").write_text(json.dumps(rows), encoding="utf-8")
+    loader = SchoolOfHacksLoader(data_dir=tmp_path)
+    samples = loader.load_samples()
+
+    langs = {s["language"] for s in samples}
+    assert "c++" in langs
+    assert "python" in langs
+    # C++ gets TP only (no TN for unsupported language)
+    cpp_clean = [s for s in samples if s["language"] == "c++" and s["metadata"]["label"] == "clean"]
+    assert cpp_clean == []
+
+
+def test_school_of_hacks_no_hack_skipped(tmp_path):
+    rows = [_syvb_row(0, _PY_CONTROL, "")]
+    (tmp_path / "syvb_coding.json").write_text(json.dumps(rows), encoding="utf-8")
     loader = SchoolOfHacksLoader(data_dir=tmp_path)
     assert loader.load_samples() == []
+
+
+def test_school_of_hacks_no_control_skipped(tmp_path):
+    rows = [_syvb_row(0, "", _PY_HACK)]
+    (tmp_path / "syvb_coding.json").write_text(json.dumps(rows), encoding="utf-8")
+    loader = SchoolOfHacksLoader(data_dir=tmp_path)
+    assert loader.load_samples() == []
+
+
+def test_school_of_hacks_label_in_metadata(tmp_path):
+    rows = [_syvb_row(0, _PY_CONTROL, _PY_HACK), _syvb_row(1, _PY_CONTROL, _PY_HACK)]
+    (tmp_path / "syvb_coding.json").write_text(json.dumps(rows), encoding="utf-8")
+    loader = SchoolOfHacksLoader(data_dir=tmp_path)
+    for s in loader.load_samples():
+        assert s["metadata"]["label"] in ("hack", "clean")
+
+
+# ---------------------------------------------------------------------------
+# MbppLoader
+# ---------------------------------------------------------------------------
+
+_MBPP_ROWS = [
+    {"task_id": 1, "text": "write a function to add two numbers", "code": "def add(a, b):\n    return a + b\n", "test_list": []},
+    {"task_id": 2, "text": "write a function to multiply", "code": "def mul(a, b):\n    return a * b\n", "test_list": []},
+    {"task_id": 3, "text": "write a function to subtract", "code": "def sub(a, b):\n    return a - b\n", "test_list": []},
+]
+
+
+def test_mbpp_emits_tn_pairs(tmp_path):
+    (tmp_path / "mbpp_rows.json").write_text(json.dumps(_MBPP_ROWS), encoding="utf-8")
+    loader = MbppLoader(data_dir=tmp_path)
+    pairs = loader.load_samples()
+    assert len(pairs) == 3
+    for p in pairs:
+        assert validate_code_pair(p)
+        assert p["benchmark"] == "mbpp"
+        assert p["metadata"]["label"] == "clean"
+        assert p["language"] == "python"
+
+
+def test_mbpp_rotation_uses_different_problems(tmp_path):
+    (tmp_path / "mbpp_rows.json").write_text(json.dumps(_MBPP_ROWS), encoding="utf-8")
+    loader = MbppLoader(data_dir=tmp_path)
+    pairs = loader.load_samples()
+    # Each pair should have different task_ids for original and generated
+    for p in pairs:
+        assert p["metadata"]["task_id_orig"] != p["metadata"]["task_id_gen"]
+
+
+def test_mbpp_lookup(tmp_path):
+    (tmp_path / "mbpp_rows.json").write_text(json.dumps(_MBPP_ROWS), encoding="utf-8")
+    loader = MbppLoader(data_dir=tmp_path)
+    lu = loader.lookup()
+    assert lu[1] == _MBPP_ROWS[0]["code"]
+    assert lu[2] == _MBPP_ROWS[1]["code"]
+
+
+def test_mbpp_not_available_raises(tmp_path):
+    loader = MbppLoader(data_dir=tmp_path / "nonexistent")
+    with pytest.raises(FileNotFoundError):
+        loader.load_samples()
 
 
 # ---------------------------------------------------------------------------
