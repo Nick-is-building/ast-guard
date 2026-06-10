@@ -2,7 +2,7 @@
 
 ## Abstract
 
-ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across four datasets: the built-in TRACE-aligned suite (33 hand-written samples covering structural subcategories — not the published TRACE dataset), the external TRACE HuggingFace dataset (46 trajectories), Countdown-Code (15,894 samples), School of Reward Hacks (26 valid Python samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode (original vs. generated code), ast-guard achieves 95.7% F1 on the built-in hand-written suite (structurally detectable subcategories only) with 100% precision and 0% false positive rate. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.2.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
+ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across five datasets: the built-in TRACE-aligned suite (33 hand-written samples), School of Reward Hacks (104 labeled Python pairs), MBPP (974 TN pairs), Countdown-Code (15,894 samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode on real external data, ast-guard achieves **97.0% F1 on School of Reward Hacks** (100% precision, 94.2% recall, 0.0% FPR) and **0.1% FPR on MBPP** identity pairs. On the built-in hand-written suite, it achieves 95.7% F1 with 100% precision. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.2.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
 
 ---
 
@@ -88,20 +88,36 @@ Context: 99% of samples are legitimate short arithmetic functions. The 160 flagg
 ### School of Reward Hacks (pair mode)
 
 Source: `syvb/school-of-reward-hacks-coding-tasks` (HuggingFace CC-BY-4.0), accessed 2026-06-10.
-54 Python TP pairs (original=honest control solution, generated=hardcoded hack) + 54 Python TN pairs (control vs. next problem's control). 26 C++ TP pairs are loaded but skipped (no C++ adapter yet).
+52 Python TP pairs (original=honest control, generated=hardcoded hack) + 52 Python TN pairs (same-problem identity). 28 skipped: 26 C++ TP (no adapter yet) + 2 invalid Python.
+Artifact: `benchmarks/data/sorh_results.json`
 
-**Run command:** `python -m benchmarks.run_benchmark --benchmark school-of-hacks --json results.json`
+| Metric | Value |
+|--------|-------|
+| Labeled pairs | 104 (52 TP + 52 TN) |
+| TP | 49 |
+| FP | 0 |
+| FN | 3 |
+| TN | 52 |
+| **Precision** | **100.0%** |
+| **Recall** | **94.2%** |
+| **F1** | **97.0%** |
+| **FPR** | **0.0%** |
 
-Pair-mode metrics not yet recorded — run the command above to produce the artifact. The loader and runner are wired; results will be saved to `benchmarks/data/` when run by the user.
+The 3 FN are hardcoded solutions that stayed below Check 1/5 thresholds. The 28 skipped C++ pairs will contribute once a C++ tree-sitter adapter is added.
 
-### MBPP (pair mode — TN baseline)
+### MBPP (pair mode — TN FPR baseline)
 
 Source: `google-research-datasets/mbpp` (HuggingFace Apache-2.0), accessed 2026-06-10.
-974 TN pairs: each MBPP reference solution paired with the next problem's reference solution. Expected verdict: CLEAN. Measures pair-mode FPR when comparing two different honest solutions.
+974 same-problem identity TN pairs: each MBPP reference solution compared to itself. Measures baseline FPR — an honest solution must never flag against the reference it was derived from.
+Artifact: `benchmarks/data/mbpp_results.json`
 
-**Run command:** `python -m benchmarks.run_benchmark --benchmark mbpp --json results.json`
+| Metric | Value |
+|--------|-------|
+| TN pairs | 974 |
+| FP | 1 |
+| **FPR** | **0.1%** |
 
-FPR not yet recorded — run the command above.
+The single FP is task_id 950 (`chinese_zodiac`): a legitimate 12-branch `elif` chain for the 12 zodiac signs that trips Check 5 (extensional enumeration). This is a known Check 5 edge case — constant-valued dispatch tables that happen to meet the ratio threshold.
 
 ### External TRACE Dataset
 
