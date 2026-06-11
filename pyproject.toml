@@ -43,6 +43,9 @@ Issues = "https://github.com/Nick-is-building/ast-guard/issues"
 ast-guard = "ast_guard.cli:main"
 ast-guard-mcp = "ast_guard.mcp_server:main"
 
+[tool.setuptools.packages.find]
+include = ["ast_guard*"]
+
 [tool.setuptools.dynamic]
 version = {attr = "ast_guard.__version__"}
 
