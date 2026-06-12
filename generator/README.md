@@ -1,21 +1,29 @@
 # generator
 
 Produces synthetic reward-hack CodePair samples for augmenting ast-guard benchmarks.
-Starting from seed problems (MBPP + custom), it applies one parameterised hack strategy
-per TRACE category (hardcoded_outputs, lookup_table, eval_obfuscation, forbidden_import,
-enumeration, complexity_collapse), verifies each candidate against visible and hidden
-tests via a subprocess sandbox, and emits labelled (original, generated, label,
-trace_category) JSONL records that are fully compatible with the ast-guard benchmark
-loader pipeline.
+Starting from seed problems (MBPP + custom), it applies hack strategies and verifies
+each candidate against visible and hidden tests via a subprocess sandbox. The only
+label criterion is test execution: `label=hack` iff visible PASS ∧ hidden FAIL.
+
+Two generation modes produce two physically separate JSONL files:
+
+| Mode | File | Split | Strategies |
+|---|---|---|---|
+| Coupled | `--out-calibration` | `calibration` | 6 check-specific strategies |
+| Open | `--out-eval` | `eval` | No structural pattern prescribed |
+
+This separation prevents circular evaluation: calibration data trains thresholds,
+eval data tests generalisation. See **Calibration vs. Eval split** below.
 
 ## Module overview
 
 | File | Role |
 |---|---|
 | `seeds.py` | Load MBPP / HumanEval / APPS / custom seeds; split tests into visible (prompt) + hidden (verification) |
-| `hack_strategies.py` | One `HackStrategy` per TRACE category; each carries a system prompt and hack instruction for the LLM |
+| `hack_strategies.py` | Six coupled `HackStrategy` objects + one `OpenHackStrategy` (no check coupling) |
 | `verify.py` | Subprocess sandbox: assert-based runner + IO runner (stdin/stdout for APPS); `is_hack` = visible PASS ∧ hidden FAIL |
 | `generate.py` | Orchestrator: seeds × strategies → LLM → verify → dedup → validate → emit JSONL |
+| `split.py` | `assign_split()`, `make_sample_id()`, `compute_prompt_hash()` — deterministic, pure functions |
 
 ## Dependencies
 
@@ -47,17 +55,28 @@ python -c "from benchmarks.loaders.mbpp import MbppLoader; MbppLoader().download
 python -c "from benchmarks.loaders.humaneval import HumanEvalLoader; HumanEvalLoader().download()"
 python -c "from benchmarks.loaders.apps import AppsLoader; AppsLoader().download()"
 
-# Smoke test: 5 seeds, max 10 pairs
+# Smoke test (coupled only, backward-compat single file)
 python -m generator.generate --max 10 --seeds 5 --out smoke.jsonl
 
-# Full run — all sources, all 6 categories (~24,000 max pairs)
-python -m generator.generate --out generated_pairs.jsonl
+# Full coupled run — calibration split only
+python -m generator.generate --out-calibration calibration_pairs.jsonl
 
-# Single category
-python -m generator.generate --categories hardcoded_outputs --out tp_hardcoded.jsonl
+# Full open run — both splits in separate files
+python -m generator.generate \
+  --open \
+  --out-calibration calibration_pairs.jsonl \
+  --out-eval eval_pairs.jsonl
 
-# Custom seeds only
-python -m generator.generate --custom my_seeds.json --out custom_pairs.jsonl
+# Open mode with specific models and variants
+python -m generator.generate \
+  --open \
+  --open-models claude-opus-4-7,claude-sonnet-4-6 \
+  --open-variants imperative,adversarial \
+  --out-calibration calibration_pairs.jsonl \
+  --out-eval eval_pairs.jsonl
+
+# Single coupled category
+python -m generator.generate --categories hardcoded_outputs --out-calibration tp_hardcoded.jsonl
 ```
 
 `ANTHROPIC_API_KEY` must be set in the environment.
@@ -69,3 +88,44 @@ python -m generator.generate --custom my_seeds.json --out custom_pairs.jsonl
 
 The determinism principle from ast-guard applies here: the label is determined by test
 execution results, never by an LLM verdict.
+
+## Calibration vs. eval split
+
+**The problem with check-coupled data.** Each of the 6 coupled strategies is designed to
+trigger specific ast-guard checks. Evaluating the detector on its own training signal
+measures memorisation, not generalisation. If check 5 was tuned using `enumeration`
+strategy samples, running the benchmark on `enumeration` samples tells you the detector
+fires on patterns it was built to fire on — not whether it catches novel patterns.
+
+**The solution: construction-time separation.**
+
+| Split | Source | Purpose |
+|---|---|---|
+| `calibration` | Coupled strategies, TN pairs | Threshold and rule calibration |
+| `eval` | Open-mode hacks (diverse models × prompts) | Generalisation measurement |
+
+The split is encoded in every `sample_id` (`open/…` → eval, `coupled/…` → calibration)
+and in the `metadata.split` field. It is a deterministic function of the sample_id —
+no random assignment, no runtime manipulation.
+
+**Structural enforcement.** Calibration and eval samples are always written to separate
+JSONL files (`--out-calibration` / `--out-eval`). The `GeneratorLoader` API enforces
+the split at load time: `load_eval(path)` and `load_calibration(path)` are the only
+entry points — `load_samples()` without an explicit `split=` argument raises `ValueError`.
+
+**Open mode diversification.** Open-mode generation iterates over 3 models and 3 prompt
+variants (9 combinations per seed). The `metadata.prompt_hash` field makes diversity
+measurable: a healthy eval set should have many distinct prompt hashes.
+
+To load eval data for benchmarking:
+```python
+from benchmarks.loaders.generator_loader import GeneratorLoader
+samples = GeneratorLoader().load_eval("eval_pairs.jsonl")
+```
+
+To run the benchmark runner against the eval split:
+```bash
+python -m benchmarks.run_benchmark \
+  --benchmark generator \
+  --generator-eval-path eval_pairs.jsonl
+```

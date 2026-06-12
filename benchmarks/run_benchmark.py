@@ -220,6 +220,7 @@ _BENCHMARK_NAMES = [
     "malt",
     "structural",
     "mbpp",
+    "generator",
 ]
 
 
@@ -370,6 +371,7 @@ def run_external_benchmarks(
     download: bool = False,
     mode: str = "strict",
     emit_confidence: bool = False,
+    generator_eval_path: Path | None = None,
 ) -> dict:
     """Load and scan external benchmark samples; return structured results."""
     from benchmarks.loaders import get_loader, get_all_loaders
@@ -395,6 +397,65 @@ def run_external_benchmarks(
                 loader.download()
             except Exception as exc:
                 logger.warning("Download failed for %s: %s", name, exc)
+
+        # Generator benchmark uses explicit eval path and mandatory split enforcement.
+        if name == "generator":
+            if generator_eval_path is None:
+                logger.info(
+                    "Skipping generator benchmark — no --generator-eval-path provided"
+                )
+                results[name] = {
+                    "status": "unavailable",
+                    "total": 0, "detected": 0, "skipped": 0,
+                    "detection_rate": 0.0, "by_category": {}, "details": [],
+                }
+                continue
+            try:
+                from benchmarks.loaders.generator_loader import GeneratorLoader
+                samples = GeneratorLoader().load_eval(generator_eval_path)
+            except Exception as exc:
+                logger.error("Failed to load generator eval data: %s", exc)
+                results[name] = {
+                    "status": "error", "error": str(exc),
+                    "total": 0, "detected": 0, "skipped": 0,
+                    "detection_rate": 0.0, "by_category": {}, "details": [],
+                }
+                continue
+
+            details = []
+            by_category: dict[str, dict] = {}
+            for pair in samples:
+                rec = _scan_code_pair(pair, mode=mode, emit_confidence=emit_confidence)
+                details.append(rec)
+                cat = rec["category"]
+                if cat not in by_category:
+                    by_category[cat] = {"total": 0, "detected": 0, "skipped": 0}
+                by_category[cat]["total"] += 1
+                if rec.get("skipped"):
+                    by_category[cat]["skipped"] += 1
+                elif rec["detected"]:
+                    by_category[cat]["detected"] += 1
+
+            total = len(details)
+            detected = sum(1 for r in details if r.get("detected"))
+            skipped = sum(1 for r in details if r.get("skipped"))
+            scannable = total - skipped
+            detection_rate = round(detected / scannable * 100, 1) if scannable > 0 else 0.0
+            pair_metrics: dict | None = _compute_pair_metrics(details)
+
+            results[name] = {
+                "status": "ok",
+                "total": total, "detected": detected, "skipped": skipped,
+                "scannable": scannable, "detection_rate": detection_rate,
+                "by_category": by_category, "details": details,
+            }
+            if pair_metrics is not None:
+                results[name]["pair_metrics"] = pair_metrics
+            logger.info(
+                "generator (eval split): %d/%d detected (%.1f%%), %d skipped",
+                detected, scannable, detection_rate, skipped,
+            )
+            continue
 
         if not loader.is_available():
             logger.info("Skipping %s — data not available", name)
@@ -805,6 +866,16 @@ def main():
             "benchmarks/score_curve.py."
         ),
     )
+    parser.add_argument(
+        "--generator-eval-path",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the eval-split JSONL produced by generator.generate --open. "
+            "Required when --benchmark includes 'generator'."
+        ),
+    )
     args = parser.parse_args()
 
     if args.benchmark:
@@ -836,6 +907,7 @@ def main():
             download=args.download,
             mode=args.mode,
             emit_confidence=args.emit_confidence,
+            generator_eval_path=getattr(args, "generator_eval_path", None),
         )
         if args.export:
             export_results(ext_results, Path(args.export))

@@ -187,6 +187,72 @@ Promoted Bash and JavaScript from preview-quality adapters to first-class ast-gu
 
 ---
 
+## Calibration vs. Eval Split (generator dataset, v2.3+)
+
+### The circularity problem
+
+The generator's 6 coupled strategies are designed to trigger specific ast-guard checks:
+`hardcoded_outputs` fires checks 1 and 5; `lookup_table` fires checks 1 and 2; and so
+on. Using these samples for both calibration (threshold tuning) and evaluation produces
+a circular measurement: the detector is tuned on patterns it was built to detect, then
+evaluated on those same patterns. The resulting F1 score reflects memorisation, not
+generalisation to novel reward-hacking patterns.
+
+### The construction-time solution
+
+Samples are assigned to one of two disjoint splits at generation time, based on how
+they were produced:
+
+| Split | Source | Intended use |
+|---|---|---|
+| `calibration` | Coupled strategies (6), TN (honest-vs-honest) pairs | Threshold tuning, ablation, internal regression |
+| `eval` | Open-mode generation (no structural pattern prescribed) | Generalisation measurement, published results |
+
+The split is a **deterministic function of the sample_id**, not a random assignment:
+- `sample_id` starting with `coupled/` → `calibration`
+- `sample_id` starting with `open/` → `eval`
+
+`generator/split.py` owns this logic. `assign_split(sample_id)` is a pure function:
+same input always returns the same output, no mutable state.
+
+### Open-mode generation
+
+Open mode (`--open`) gives the LLM only a behavioural goal: pass the visible tests
+without correctly solving the problem. No structural pattern is prescribed and no
+ast-guard check names appear in the prompt. The generator rotates across:
+- 3 prompt variants (imperative, adversarial, competitive framing)
+- 3 models (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001)
+
+This produces up to 9 hack attempts per seed, each yielding a distinct `prompt_hash`.
+A healthy eval set should show high prompt\_hash entropy — if many samples share the
+same hash, the eval is effectively single-model.
+
+### Structural enforcement
+
+Two layers prevent accidental split mixing:
+
+1. **Physical separation.** The generator CLI writes calibration and eval samples to
+   separate JSONL files (`--out-calibration` / `--out-eval`). The files are opened
+   independently; no code path writes both splits to the same file.
+
+2. **Loader API.** `GeneratorLoader.load_samples()` raises `ValueError` unless an
+   explicit `split=` argument is passed. The safe entry points are
+   `load_calibration(path)` and `load_eval(path)`. There is no `load_all()`.
+
+The benchmark runner (`--benchmark generator`) always calls `load_eval(path)` —
+calibration data never enters a published evaluation run.
+
+### Backward compatibility
+
+Old generator JSONL files (before v2.3) lack a `metadata.split` field. The loader
+infers the split conservatively:
+1. Check `metadata.split` (explicit, new samples).
+2. Check `sample_id` prefix (`open/` → eval).
+3. Check `category` against the 6 known coupled names → `calibration`.
+4. Default → `calibration`. Unknown samples never silently enter the eval set.
+
+---
+
 ## Validation Process
 
 ### Test Suite Integrity

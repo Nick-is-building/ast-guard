@@ -98,3 +98,4 @@ from .malt_loader import MaltLoader  # noqa: E402, F401
 from .mbpp import MbppLoader  # noqa: E402, F401
 from .humaneval import HumanEvalLoader  # noqa: E402, F401
 from .apps import AppsLoader  # noqa: E402, F401
+from .generator_loader import GeneratorLoader  # noqa: E402, F401
