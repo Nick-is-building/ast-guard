@@ -57,6 +57,7 @@ def load_mbpp(
     cache_path: Path | None = None,
     n_visible: int = 1,
     max_seeds: int | None = None,
+    skip_seeds: int = 0,
 ) -> list[Seed]:
     """Load MBPP seeds from the local cache written by MbppLoader.download()."""
     path = cache_path or _MBPP_DEFAULT
@@ -68,6 +69,8 @@ def load_mbpp(
         )
 
     rows: list[dict] = json.loads(path.read_text(encoding="utf-8"))
+    if skip_seeds > 0:
+        rows = rows[skip_seeds:]
     seeds: list[Seed] = []
     skipped = 0
 
@@ -142,6 +145,7 @@ def load_humaneval(
     cache_path: Path | None = None,
     n_visible: int = 1,
     max_seeds: int | None = None,
+    skip_seeds: int = 0,
 ) -> list[Seed]:
     """Load HumanEval seeds from the local cache written by HumanEvalLoader.download()."""
     path = cache_path or _HUMANEVAL_DEFAULT
@@ -153,6 +157,8 @@ def load_humaneval(
         )
 
     rows: list[dict] = json.loads(path.read_text(encoding="utf-8"))
+    if skip_seeds > 0:
+        rows = rows[skip_seeds:]
     seeds: list[Seed] = []
     skipped = 0
 
@@ -198,6 +204,7 @@ def load_apps(
     cache_path: Path | None = None,
     n_visible: int = 1,
     max_seeds: int | None = None,
+    skip_seeds: int = 0,
 ) -> list[Seed]:
     """
     Load APPS seeds from the local cache written by AppsLoader.download().
@@ -214,6 +221,8 @@ def load_apps(
         )
 
     rows: list[dict] = json.loads(path.read_text(encoding="utf-8"))
+    if skip_seeds > 0:
+        rows = rows[skip_seeds:]
     seeds: list[Seed] = []
     skipped = 0
 
@@ -321,19 +330,21 @@ def iter_seeds(
     custom_paths: list[Path] | None = None,
     n_visible: int = 1,
     max_seeds: int | None = None,
+    skip_seeds: int = 0,
 ) -> Iterator[Seed]:
     """
     Yield all seeds from MBPP, HumanEval, APPS, and any custom files.
 
     Each source is attempted in order; a missing cache is logged as a warning
     rather than raised, so single-source and custom-only runs still work.
+    skip_seeds skips the first N rows of each source before yielding.
     """
     count = 0
 
     sources = [
-        ("MBPP", lambda: load_mbpp(mbpp_path, n_visible=n_visible, max_seeds=max_seeds)),
-        ("HumanEval", lambda: load_humaneval(humaneval_path, n_visible=n_visible, max_seeds=max_seeds)),
-        ("APPS", lambda: load_apps(apps_path, n_visible=n_visible, max_seeds=max_seeds)),
+        ("MBPP", lambda: load_mbpp(mbpp_path, n_visible=n_visible, max_seeds=max_seeds, skip_seeds=skip_seeds)),
+        ("HumanEval", lambda: load_humaneval(humaneval_path, n_visible=n_visible, max_seeds=max_seeds, skip_seeds=skip_seeds)),
+        ("APPS", lambda: load_apps(apps_path, n_visible=n_visible, max_seeds=max_seeds, skip_seeds=skip_seeds)),
     ]
 
     for name, loader in sources:
