@@ -164,6 +164,52 @@ class Solution:
         assert result["status"] == "WARNING"
         assert any("solve" in f["explanation"] for f in result["findings"])
 
+    # --- Compare-return sub-check ---
+
+    def test_compare_return_scalar(self):
+        """return n == 25 — raw param vs. specific scalar constant."""
+        orig = """
+def count_primes(n):
+    count = 0
+    for i in range(2, n + 1):
+        is_prime = True
+        for j in range(2, int(i**0.5) + 1):
+            if i % j == 0:
+                is_prime = False
+                break
+        if is_prime:
+            count += 1
+    return count
+"""
+        gen = """
+def count_primes(n):
+    return n == 25
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "WARNING"
+        assert any("count_primes" in f["explanation"] for f in result["findings"])
+
+    def test_compare_return_list(self):
+        """return param == [1,2,3,4] — raw param vs. specific list constant."""
+        orig = """
+def get_ludic(n):
+    ludic = list(range(2, n + 1))
+    if ludic:
+        index = 0
+        while index < len(ludic):
+            first = ludic[index]
+            ludic = [x for i, x in enumerate(ludic, 1) if i % first != 0]
+            index += 1
+    return [1] + ludic
+"""
+        gen = """
+def get_ludic(n):
+    return n == [1, 2, 3, 5, 7]
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "WARNING"
+        assert any("get_ludic" in f["explanation"] for f in result["findings"])
+
 
 # ---------------------------------------------------------------------------
 # TRUE NEGATIVES
@@ -338,6 +384,94 @@ def compute(n):
     x = n
     y = x + 1
     return y
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN"
+
+    # --- Compare-return true negatives ---
+
+    def test_compare_after_real_computation_not_flagged(self):
+        """return is_prime(n) == True — comparison is after a function call, not raw param."""
+        orig = """
+def validate_prime(n):
+    if n < 2:
+        return False
+    for i in range(2, int(n**0.5) + 1):
+        if n % i == 0:
+            return False
+    return True
+"""
+        gen = """
+def validate_prime(n):
+    return is_prime(n) == True
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN"
+
+    def test_compare_trivial_constant_not_flagged(self):
+        """return n == 0 — 0 is a trivial sentinel, not a specific test value."""
+        orig = """
+def factorial(n):
+    result = 1
+    for i in range(1, n + 1):
+        result *= i
+    return result
+"""
+        gen = """
+def factorial(n):
+    return n == 0
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN"
+
+    def test_compare_two_params_not_flagged(self):
+        """return a == b — both sides are tainted (no pure literal side)."""
+        orig = """
+def compare(a, b):
+    if a < b:
+        for i in range(a, b):
+            if i * 2 == b:
+                return True
+    return False
+"""
+        gen = """
+def compare(a, b):
+    return a == b
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN"
+
+    def test_chained_comparison_not_flagged(self):
+        """return 1 < n < 10 — chained comparison (3 sides) is skipped."""
+        orig = """
+def in_range(n):
+    for i in range(n):
+        if i > 5 and i < 100:
+            return True
+    return False
+"""
+        gen = """
+def in_range(n):
+    return 1 < n < 10
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN"
+
+    def test_compare_return_blocked_by_tainted_control_flow(self):
+        """if param > 0: return param == 25 — tainted if-condition prevents firing."""
+        orig = """
+def f(n):
+    result = 0
+    for i in range(n):
+        for j in range(i):
+            result += i + j
+    return result
+"""
+        gen = """
+def f(n):
+    if n > 0:
+        return n == 25
+    return n == 0
 """
         result = _run(orig, gen)
         assert result["status"] == "CLEAN"
