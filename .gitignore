@@ -13,7 +13,17 @@ feedback.jsonl
 *.zip
 
 # Benchmark exports — ad-hoc runs at the repo root are working artifacts,
-# not deliverables. Use `--export benchmarks/data/<name>` to persist a
-# snapshot you want to keep.
+# not deliverables. Copy to benchmarks/data/generator_splits/ with a
+# descriptive name to persist a snapshot you want to keep.
 /results.json
 /results.md
+
+# Generator output at repo root — working artifacts.
+# Committed copies live in benchmarks/data/generator_splits/.
+/calibration_pairs.jsonl
+/calibration_pairs_validation.jsonl
+/calibration_pairs_floor.jsonl
+/eval_pairs.jsonl
+/eval_pairs_validation.jsonl
+/eval_pairs_compare.jsonl
+/eval_pairs_floor.jsonl
