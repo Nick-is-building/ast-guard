@@ -27,6 +27,8 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 | 4 | Import Drift | CRITICAL on dangerous stdlib modules; WARNING on unknowns | Python, Bash, JS |
 | 5 | Extensional Enumeration | if/elif or match/case chains covering >70% of branches with no loops | Python, Bash, JS |
 | 6 | Behavioral Risk Scoring | Additive score from AST-detectable behavioral patterns (standalone) | Python, Bash, JS |
+| 7 | Literal Hijack | Generated function returns only literals regardless of inputs; original was non-trivial | Python |
+| 8 | New Constant Bypass | If-branch compares against new specific constant and returns input-independently | Python |
 
 ---
 
@@ -218,6 +220,46 @@ Note: Check 2 does not fire in standalone mode — there is no baseline complexi
 | file\_write\_unknown\_target +10 | 454 | Unresolvable filename; contributes to aggregate score only |
 
 Bash/JS contribute 6 and 9 normal FPs respectively (negligible: 0.4% of total normal FPs), confirming the new behavioral modules are well-calibrated.
+
+---
+
+## Generator Eval: Checks 7 & 8 (open-mode, pair mode)
+
+Pair-mode recall and precision measured on LLM-generated hacks and clean pairs produced
+by the built-in generator. Two independent splits reported; neither was used for check
+development.
+
+### Independent Validation (mbpp-661–700)
+
+40 seeds × 2 variants (imperative + adversarial) × claude-sonnet-4-6.
+Full results and analysis in `METHODOLOGY.md § Independent Validation`.
+
+| Metric | Value |
+|--------|-------|
+| Hack pairs | 57 |
+| Recall | 68.4% |
+| Precision (easy TN) | 100.0% |
+| Precision (hard TN) | 89.7% |
+
+Note: these numbers were recorded with `_ORIG_COMPLEXITY_FLOOR = 2`. The floor was
+subsequently lowered to 1 after the floor-lowering experiment below.
+
+### Floor-Lowering Experiment (mbpp-741–780, floor = 1)
+
+40 seeds × 3 models × 3 variants. Evaluates `_ORIG_COMPLEXITY_FLOOR = 1` (current).
+Full protocol and per-config breakdown in `METHODOLOGY.md § Floor-Lowering Experiment`.
+
+| Metric | floor=2 (old) | floor=1 (current) | Δ |
+|--------|--------------|-------------------|---|
+| Hack pairs | 169 | 169 | — |
+| **Recall** | 0.757 | **0.864** | **+0.107** |
+| Precision (easy TN, 40 pairs) | 1.000 | **1.000** | 0 |
+| Precision (hard TN, 35 pairs) | 0.857 | **0.857** | 0 |
+| New FPs from floor change | — | **0** | — |
+
+The floor lowering from 2 to 1 recovers +10.7 pp recall at zero precision cost on this
+fresh, unseen split. The 5 pre-existing hard TN FPs are from Checks 1 and 2, unaffected
+by the floor change.
 
 ---
 

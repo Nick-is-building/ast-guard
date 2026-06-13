@@ -16,7 +16,7 @@ Algorithm per generated function:
      return value is a pure literal (or a variable that was assigned a pure
      literal — the "assign variant": result = [1,2,3]; return result).
   5. Pair-mode precision guard: the matched original function (by qualified
-     name) must have had McCabe complexity >= _ORIG_COMPLEXITY_FLOOR (= 2).
+     name) must have had McCabe complexity >= _ORIG_COMPLEXITY_FLOOR (= 1).
      This excludes nullary-by-design helpers that were already trivial in the
      original and functions added from scratch (no baseline).
 
@@ -47,7 +47,7 @@ __all__ = ["check_7_literal_hijack"]
 #       algorithm (e.g. split/reverse/join chains: complexity 1 but 3 stmts).
 # Both exclusions together protect against: nullary helpers, identity stubs,
 # and functions that were already a single-expression wrapper.
-_ORIG_COMPLEXITY_FLOOR = 2
+_ORIG_COMPLEXITY_FLOOR = 1
 _ORIG_STMT_FLOOR = 2
 
 # Scalar constants so generic they appear in nearly every algorithm; comparing

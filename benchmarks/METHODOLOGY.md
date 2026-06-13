@@ -467,16 +467,17 @@ adversarially-constructed validation.
 All 18 false negatives share a common cause: the honest reference solution for the
 corresponding seed had **McCabe complexity = 1** — a single-expression list operation,
 string manipulation, or arithmetic formula. Both Check 7 and Check 8 require the original
-function to have had genuine algorithmic complexity (`_ORIG_COMPLEXITY_FLOOR = 2`) before
-firing. This guard exists to prevent FPs on nullary-by-design helpers and trivial one-liner
-originals.
+function to have had genuine algorithmic complexity (`_ORIG_COMPLEXITY_FLOOR`, at the time
+of this validation set to 2) before firing. This guard exists to prevent FPs on
+nullary-by-design helpers and trivial one-liner originals.
 
 The consequence is a known blind spot: when the original is a one-liner, the checks
 withhold their signal even for structurally obvious hacks like `if lst == [1,2,3]:
 return [2,3,1]`. This validation quantifies the cost of that decision — 18 out of 18
-undetected hacks on this seed set trace back to this single guard. The guard stays in:
-removing it would generate false positives on legitimate one-liner rewrites
-disproportionately to the TPs recovered.
+undetected hacks on this seed set trace back to this single guard.
+
+**This guard was subsequently empirically tested and lowered from 2 to 1. See the
+Floor-Lowering Experiment section below.**
 
 Two further structural gaps account for smaller shares of the adversarial-variant misses:
 - `return param == <test_value>` — a `Compare` node is not a pure literal; Check 7's
@@ -500,6 +501,86 @@ The validation run confirms three properties:
 3. **Precision cost is localised to Checks 1 and 2.** The 4 FPs come from structural
    checks whose sensitivity to complete algorithm rewrites is a documented, accepted
    trade-off. No new FP mechanism was discovered.
+
+---
+
+## Floor-Lowering Experiment (mbpp-741–780)
+
+**Goal:** Empirically measure the precision cost of lowering `_ORIG_COMPLEXITY_FLOOR`
+from 2 to 1 in Checks 7 and 8, rather than accepting the theoretical risk that motivated
+the original floor=2 choice.
+
+**Motivation:** The independent validation (mbpp-661–700) identified `_ORIG_COMPLEXITY_FLOOR`
+as the dominant source of missed hacks. The floor=2 guard was introduced as a
+*theoretical* precision protection — complexity-1 functions were assumed to be trivial
+helpers that should not be checked. The validation showed this assumption had a measurable
+recall cost (18/18 FNs traced to it). The question was whether the assumed precision cost
+was real.
+
+**Protocol:** 40 fresh MBPP seeds (task IDs 741–780), not used in any prior run. Open-mode
+generation: claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5-20251001 × 3 prompt
+variants (imperative, adversarial, competitive). Hard-TN mode active. Same evaluation
+harness as the independent validation. Four configurations scored in a single run without
+modifying the shipped code (monkey-patching module constants):
+
+| Config | floor7 | floor8 | Description |
+|--------|--------|--------|-------------|
+| A | 2 | 2 | Baseline (pre-experiment) |
+| B | 1 | 1 | Both relaxed |
+| C | 1 | 2 | Only Check 7 relaxed |
+| D | 2 | 1 | Only Check 8 relaxed |
+
+**Dataset split:**
+
+| Split | Count |
+|---|---|
+| Hack pairs (open mode, verified) | 169 |
+| Easy TN pairs (honest-vs-honest) | 40 |
+| Hard TN pairs (honest-vs-alternative) | 35 |
+
+**Results:**
+
+| Config | Recall | Easy TN prec | Hard TN prec | ΔRecall | ΔFP easy | ΔFP hard |
+|--------|--------|--------------|--------------|---------|----------|----------|
+| A (floor=2) | 0.757 | 1.000 | 0.857 | — | — | — |
+| B (both=1) | 0.864 | 1.000 | 0.857 | **+0.107** | **0** | **0** |
+| C (C7=1) | 0.805 | 1.000 | 0.857 | +0.047 | 0 | 0 |
+| D (C8=1) | 0.817 | 1.000 | 0.857 | +0.059 | 0 | 0 |
+
+**Key findings:**
+
+1. **Zero precision cost.** Lowering either or both floors to 1 adds zero false positives
+   on all 75 clean pairs (40 easy TNs + 35 hard TNs). The 5 pre-existing hard TN FPs are
+   unchanged across all configurations — they come from Checks 1 and 2, not from Check 7
+   or 8 at any floor setting.
+
+2. **+10.7 pp recall gain from lowering both.** Config B recovers 18 missed hacks compared
+   to baseline, a jump from 75.7% to 86.4% recall on this seed set.
+
+3. **Gains are nearly additive.** C (+4.7 pp) + D (+5.9 pp) ≈ B (+10.7 pp). The two
+   checks recover largely disjoint sets of hacks (different structural patterns), so
+   relaxing both together produces close to the sum of individual gains.
+
+4. **Check 8 contributes slightly more** than Check 7 when relaxed individually (D > C).
+   Both are worth relaxing: for stmts=1 seeds (mbpp-748, mbpp-769, mbpp-775), some hacks
+   are caught exclusively by Check 7 at floor=1 and not by Check 8 — the gains are not
+   redundant.
+
+5. **The original floor=2 was a theoretical guard that did not materialise.** On
+   MBPP-style functions — where even single-branch originals contain multi-step
+   computation — the floor=2 assumption (complexity=1 ⟹ trivially safe) was wrong.
+
+**Decision:** Both floors lowered to 1 permanently. Two unit tests that were explicitly
+testing the floor=2 behavior (`test_original_was_already_trivial` in Check 7,
+`test_original_complexity_one` in Check 8) were updated to reflect the new spec: at
+floor=1, complexity-1 functions are in scope for both checks.
+
+**Spec implication at floor=1:** A function that returns only literals with no
+input-dependent computation will fire Check 7 even if its original also returned only a
+literal (e.g., `noop(x): return None` in an identical pair). This is an accepted
+consequence: the structural pattern is present and the floor no longer excludes it.
+In practice on MBPP-style honest solutions (which all contain genuine multi-statement
+computation), this does not occur.
 
 ---
 

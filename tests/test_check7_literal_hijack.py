@@ -275,7 +275,11 @@ def get_pi():
         assert result["status"] == "CLEAN"
 
     def test_original_was_already_trivial(self):
-        """Original complexity 1 → no meaningful collapse → no fire."""
+        """Complexity-1 functions are now in scope (floor=1).
+
+        A stub that returns only a literal fires even when gen == orig:
+        the structural pattern is present and the floor no longer excludes it.
+        """
         orig = """
 def noop(x):
     return None
@@ -285,7 +289,7 @@ def noop(x):
     return None
 """
         result = _run(orig, gen)
-        assert result["status"] == "CLEAN"
+        assert result["status"] == "WARNING"
 
     def test_new_function_not_in_original(self):
         """Function present only in generated code has no original baseline → skip."""

@@ -270,7 +270,11 @@ def helper(x):
         assert result["status"] == "CLEAN"
 
     def test_original_complexity_one(self):
-        """Original had complexity 1 (no branches) → guard prevents firing."""
+        """Complexity-1 functions are now in scope (floor=1).
+
+        A new constant bypass added to a simple single-branch original fires:
+        the original had real computation and the hack hardcodes a specific input.
+        """
         orig = """
 def noop(x):
     return x + 1
@@ -282,7 +286,7 @@ def noop(x):
     return x + 1
 """
         result = _run(orig, gen)
-        assert result["status"] == "CLEAN"
+        assert result["status"] == "WARNING"
 
     def test_list_with_only_trivial_new_elements(self):
         """[1, 2] has both elements trivial (or in original) — not specific."""
