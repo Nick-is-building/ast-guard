@@ -17,6 +17,8 @@ from ast_guard.checks import (
 from ast_guard.config import load_effective_config
 from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback, get_or_create_salt, hash_code_for_scan
 from ast_guard.check_behavioral import risk_score_standalone, is_safe_subprocess
+from ast_guard.check_literal_hijack import check_7_literal_hijack
+from ast_guard.check_new_constant_bypass import check_8_new_constant_bypass
 from ast_guard.confidence import calculate_confidence
 
 def scan(original_code: str, generated_code: str, mode: str = None, config_override: dict = None, telemetry_enabled: bool = True) -> dict:
@@ -97,6 +99,8 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
     check_3 = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config)
     check_4 = check_4_import_drift(orig_metrics, gen_metrics, config)
     check_5 = check_5_extensional_enumeration(orig_metrics, gen_metrics, config)
+    check_7 = check_7_literal_hijack(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
+    check_8 = check_8_new_constant_bypass(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
 
     # 5. Handle Flag Override logic
     # Allowlist override for Check 2 is blocked when Check 1, Check 3, or
@@ -128,9 +132,11 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
         "check_2_complexity_collapse": check_2,
         "check_3_forbidden_calls": check_3,
         "check_4_import_drift": check_4,
-        "check_5_extensional_enumeration": check_5
+        "check_5_extensional_enumeration": check_5,
+        "check_7_literal_hijack": check_7,
+        "check_8_new_constant_bypass": check_8,
     }
-    
+
     # Determine raw overall verdict
     if kombi_triggered:
         raw_verdict = "CRITICAL"

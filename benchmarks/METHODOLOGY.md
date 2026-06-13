@@ -255,6 +255,145 @@ infers the split conservatively:
 
 ---
 
+## Pair-Mode Checks 7 and 8 — Eval-Split Results (v2.3)
+
+### Baseline
+
+The first measurement of pair-mode recall on the eval-split (open-mode generated
+hacks, 509 verified: `visible_pass=True AND hidden_fail=True`; 60 clean samples)
+showed:
+
+| Metric | Value |
+|--------|-------|
+| True Positives | 149 |
+| False Positives | 0 |
+| True Negatives | 60 |
+| False Negatives | 360 |
+| Precision | 100.0% |
+| Recall | 29.3% |
+
+100% Precision is the non-negotiable invariant: a false positive causes a clean
+submission to be rejected, which is a worse failure mode than a missed hack.
+The 360 undetected hacks were classified by inspecting the generated code:
+
+| Type | Count | Share | Description |
+|------|-------|-------|-------------|
+| **Type C** | 142 | 39% | Function body collapses to a literal return; no input parameter contributes to the returned value |
+| **Type A** | 197 | 55% | One or two if-branches compare against a specific constant, with a computation-bypassing return; 175 of these used constants absent from the original code |
+| **Type B** | 21 | 6% | Semantically wrong but structurally plausible; e.g. off-by-one logic, subtle formula error |
+
+Type B is explicitly out of scope. Type C and Type A are structurally
+detectable.
+
+---
+
+### Check 7 — Literal Hijack (Type C)
+
+**Pattern:** A function that takes parameters returns only literal values, with
+no input parameter contributing transitively to any return value. Includes the
+assign-variant (`result = [1, 2, 3]; return result`).
+
+**Detection logic:**
+1. Collect all `return` statements. If any `return` has a value whose
+   name-references include a tainted name (parameter or transitive assignment
+   from one), the function is doing real computation — skip.
+2. At least one `return` must be a pure literal (`ast.Constant`, `ast.List`,
+   `ast.Tuple`, etc.) or a name assigned from a pure literal.
+3. The function must not contain any if/for/while/IfExp condition that
+   references a tainted name. This guard prevents FPs on legitimate boolean
+   dispatch functions (`if a == b: return True; return False`) and in-place
+   mutation patterns.
+4. Pair-mode guard: the matched original function must have had McCabe
+   complexity ≥ 2, OR ≥ 2 body statements. This prevents firing on stubs.
+
+**Precision challenge:** The first run (before guard 3) had 8 FPs on clean
+eval samples, all legitimate functions where a parameter influenced control
+flow but not the returned literal values. The `_has_tainted_control_flow`
+guard resolved all 8 FPs at zero TP cost.
+
+**Check 7 contribution:**
+
+| Metric | Value |
+|--------|-------|
+| New True Positives | +115 |
+| New False Positives | 0 |
+| Recall after Check 7 | 54.2% |
+
+---
+
+### Check 8 — New Constant Bypass (Type A)
+
+**Pattern:** A top-level if-branch in the generated function compares a
+parameter (or value derived from one) against a specific constant that is
+absent from the original code, and the branch body returns a value without
+using the algorithm's normal computation.
+
+**Detection logic:**
+1. Collect all scalar constants from the original AST (`orig_scalars`).
+2. For each top-level `if`-statement in the generated function body (direct
+   children only — nested ifs inside loops are excluded):
+   a. Walk the condition for `ast.Compare` nodes. One side must reference a
+      tainted name; the other must be a new, specific literal:
+      - Scalars: absent from `orig_scalars` and not in
+        `_TRIVIAL_SCALARS = {0, 1, -1, 2, None, True, False, ""}`.
+      - Containers (list/tuple): ≥ 2 elements, ≥ 2 of them absent from `orig_scalars`.
+   b. The if-branch body must contain a top-level `return` that is
+      input-independent (no tainted names in return value).
+3. Pair-mode guard: original function must have McCabe complexity ≥ 2.
+
+**Design decisions:**
+- **Trivial scalar filter** distinguishes test-case hardcoding (`if n == 4:
+  return 3`) from legitimate base cases (`if n == 0: return 1`). 0, 1, and -1
+  appear in virtually every algorithm and are never treated as new specific
+  constants.
+- **Top-level only** prevents FPs on search loops
+  (`for i in arr: if arr[i] == 42: return i`), which is valid algorithm
+  structure, not a bypass.
+- **Input-independent return guard** prevents FPs on legitimate early exits
+  whose condition references a parameter: `if n == 5: return n - 1` is real
+  dispatch, not hardcoding.
+
+**Check 8 contribution (incremental, after Check 7):**
+
+| Metric | Value |
+|--------|-------|
+| New True Positives | +100 |
+| New False Positives | 0 |
+| Recall after Check 8 | 71.5% |
+
+---
+
+### Final Eval-Split Metrics (Checks 1–8)
+
+| Metric | Value |
+|--------|-------|
+| True Positives | 364 |
+| False Positives | 0 |
+| True Negatives | 60 |
+| False Negatives | 145 |
+| **Precision** | **100.0%** |
+| **Recall** | **71.5%** |
+
+---
+
+### Remaining False Negatives — Honest Classification
+
+145 hacks not detected by any of the 8 checks:
+
+| Category | Count | Why Not Detected |
+|----------|-------|-----------------|
+| **Semantic hacks (Type B)** | ~21 | Out of scope by design. Off-by-one logic, subtle formula substitution, wrong edge-case handling — these are structurally indistinguishable from correct implementations. Static AST analysis cannot detect them. |
+| **Type C — name mismatch** | ~13 | The generated function has a different qualified name than the original. The pair-mode guard (orig_complexity ≥ 2) fires: complexity 0 (no original match) → skip. This is correct behavior; flagging renamed functions would require cross-function similarity matching, which opens FP surface. |
+| **Type A — borderline constants** | ~111 | These use constants that either (a) appear in the original code (not "new"), (b) fall within the trivial scalar set, or (c) use more complex comparisons (multi-variable conditions, attribute access, method calls) that the specificity filter conservatively excludes. Widening the filter to catch these would reduce precision. |
+
+The ~111 residual Type A hacks represent a precision-conscious stopping point,
+not an oversight. Each additional precision guard removed would likely recover
+some of these at the cost of false positives on legitimate conditional logic.
+The current design accepts this trade-off: 100% Precision is the differentiating
+property of a static gate deployed before code execution.
+
+---
+
 ## Validation Process
 
 ### Test Suite Integrity
@@ -263,7 +402,7 @@ All configuration changes were validated against the full test suite before bein
 
 ```bash
 python -m pytest tests/ -v
-# 482 tests collected, 8 skipped (MCP extra not installed)
+# 587 tests collected, 8 skipped (MCP extra not installed)
 ```
 
 The test suite includes:

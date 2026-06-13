@@ -77,6 +77,8 @@ def calculate_confidence(
         "check_2_complexity_collapse": 35,
         "check_4_import_drift": 25,
         "check_5_extensional_enumeration": 40,
+        "check_7_literal_hijack": 45,
+        "check_8_new_constant_bypass": 45,
     }
 
     firing_scores = [
