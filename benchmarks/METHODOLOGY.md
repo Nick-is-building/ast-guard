@@ -185,6 +185,8 @@ Promoted Bash and JavaScript from preview-quality adapters to first-class ast-gu
 
 **Test suite:** Grew from 410 to 482 tests (+72): new bash behavioral tests, JS behavioral tests, multilang enumeration tests, detect_language_with_info tests.
 
+**Known limitation:** The Bash and JavaScript checks (Check 5+6) have not been evaluated against structurally verified TP pairs; the generator produces Python-only seeds, so Multilang detection quality is measured only via the MALT standalone benchmark (which lacks a pair-mode baseline and carries label noise at the trajectory level).
+
 ---
 
 ## Calibration vs. Eval Split (generator dataset, v2.3+)

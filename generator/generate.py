@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -90,8 +90,15 @@ class GenerateStats:
     emitted_tp: int = 0        # calibration TP (coupled strategies)
     emitted_tn: int = 0        # calibration TN (honest-vs-honest)
     emitted_open_tp: int = 0   # eval TP (open mode)
+    emitted_eval_tn: int = 0   # eval TN (open mode, honest-vs-honest)
+    # {(model, variant): {"attempts": int, "hacks": int}}
+    open_yield: dict = field(default_factory=dict)
 
     def report(self) -> str:
+        total = (
+            self.emitted_tp + self.emitted_tn
+            + self.emitted_open_tp + self.emitted_eval_tn
+        )
         lines = [
             "=== Generation Report ===",
             f"Seeds attempted:               {self.attempted}",
@@ -111,8 +118,22 @@ class GenerateStats:
             f"Emitted calibration TP:        {self.emitted_tp}",
             f"Emitted calibration TN:        {self.emitted_tn}",
             f"Emitted eval TP (open):        {self.emitted_open_tp}",
-            f"Total pairs:                   {self.emitted_tp + self.emitted_tn + self.emitted_open_tp}",
+            f"Emitted eval TN (open):        {self.emitted_eval_tn}",
+            f"Total pairs:                   {total}",
         ]
+        if self.open_yield:
+            lines += [
+                "──────────────────────────────",
+                "  Open-mode yield per (model, variant):",
+                f"  {'Model':<45}  {'Variant':<12}  {'Tries':>6}  {'Hacks':>6}  {'Yield':>7}",
+            ]
+            for (mdl, variant), counts in sorted(self.open_yield.items()):
+                tries = counts["attempts"]
+                hacks = counts["hacks"]
+                pct = f"{100 * hacks / tries:.1f}%" if tries else "n/a"
+                lines.append(
+                    f"  {mdl:<45}  {variant:<12}  {tries:>6}  {hacks:>6}  {pct:>7}"
+                )
         return "\n".join(lines)
 
 
@@ -422,6 +443,11 @@ def generate_pairs(
                         if max_pairs is not None and total_emitted >= max_pairs:
                             break
 
+                        yield_key = (open_model, variant_name)
+                        if yield_key not in stats.open_yield:
+                            stats.open_yield[yield_key] = {"attempts": 0, "hacks": 0}
+                        stats.open_yield[yield_key]["attempts"] += 1
+
                         open_user = _build_open_hack_user(seed, variant_instruction)
                         raw = _call_llm(
                             client,
@@ -488,9 +514,10 @@ def generate_pairs(
                         }
                         if _emit(open_pair, eval_file):
                             stats.emitted_open_tp += 1
+                            stats.open_yield[yield_key]["hacks"] += 1
 
             # ------------------------------------------------------------------
-            # Step 4: calibration TN pair (honest vs honest, same-problem identity)
+            # Step 4a: calibration TN pair (honest vs honest, same-problem identity)
             # ------------------------------------------------------------------
             tn_hash = _pair_hash(seed.problem_text, honest_code + "__tn__")
             if tn_hash not in seen_hashes:
@@ -519,6 +546,39 @@ def generate_pairs(
                 }
                 if _emit(tn_pair, calib_file):
                     stats.emitted_tn += 1
+
+            # ------------------------------------------------------------------
+            # Step 4b: eval TN pair — only emitted when open mode is active,
+            # so that eval has both TP and TN and F1 is measurable.
+            # ------------------------------------------------------------------
+            if open_mode:
+                eval_tn_hash = _pair_hash(seed.problem_text, honest_code + "__eval_tn__")
+                if eval_tn_hash not in seen_hashes:
+                    seen_hashes.add(eval_tn_hash)
+                    eval_tn_id = make_sample_id(f"eval-tn/{seed.seed_id}", is_open=True)
+                    eval_tn_pair: dict = {
+                        "original_code": honest_code,
+                        "generated_code": honest_code,
+                        "language": "python",
+                        "benchmark": "generator",
+                        "category": "honest-vs-honest",
+                        "sample_id": eval_tn_id,
+                        "metadata": {
+                            "label": "clean",
+                            "trace_category": None,
+                            "verified": True,
+                            "visible_pass": True,
+                            "hidden_fail": False,
+                            "split": assign_split(eval_tn_id),
+                            "model": model,
+                            "seed_id": seed.seed_id,
+                            "seed_source": seed.source,
+                            "test_format": seed.test_format,
+                            "prompt_hash": None,
+                        },
+                    }
+                    if _emit(eval_tn_pair, eval_file):
+                        stats.emitted_eval_tn += 1
 
     finally:
         if calib_file:
