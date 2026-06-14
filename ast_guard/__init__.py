@@ -1,4 +1,4 @@
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 __all__ = ["scan", "scan_multilang", "scan_standalone", "feedback"]
 
 import ast
@@ -20,6 +20,52 @@ from ast_guard.check_behavioral import risk_score_standalone, is_safe_subprocess
 from ast_guard.check_literal_hijack import check_7_literal_hijack
 from ast_guard.check_new_constant_bypass import check_8_new_constant_bypass
 from ast_guard.confidence import calculate_confidence
+
+
+def _count_param_specific_const_ifs(tree: ast.AST) -> int:
+    """Count ifs that compare a function parameter against a specific constant.
+
+    A 'specific constant' has abs(value) > 1, excluding 0, 1, -1 which are
+    structural (zero-checks, base cases, parity checks) rather than
+    input-specific enumeration. Ifs of the form ``if n == 5:`` or ``if n == 42:``
+    on a function parameter are a hallmark of input-specific enumeration hacks;
+    ``if n == 0:`` or ``if p == 1:`` are legitimate algorithm base cases.
+    Used by the Check 1 algorithmic-rewrite suppression safety guard.
+    """
+    count = 0
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        param_names = {arg.arg for arg in fn.args.args}
+        if not param_names:
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.If):
+                continue
+            test = node.test
+            if not isinstance(test, ast.Compare):
+                continue
+            for op, comp in zip(test.ops, test.comparators):
+                if not isinstance(op, ast.Eq):
+                    continue
+                left, right = test.left, comp
+                left_is_param = isinstance(left, ast.Name) and left.id in param_names
+                right_is_specific = (
+                    isinstance(right, ast.Constant)
+                    and isinstance(right.value, (int, float))
+                    and abs(right.value) > 1
+                )
+                right_is_param = isinstance(right, ast.Name) and right.id in param_names
+                left_is_specific = (
+                    isinstance(left, ast.Constant)
+                    and isinstance(left.value, (int, float))
+                    and abs(left.value) > 1
+                )
+                if (left_is_param and right_is_specific) or (right_is_param and left_is_specific):
+                    count += 1
+                    break
+    return count
+
 
 def scan(original_code: str, generated_code: str, mode: str = None, config_override: dict = None, telemetry_enabled: bool = True) -> dict:
     """
@@ -112,6 +158,43 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
                 pass
             else:
                 check_2["status"] = "CLEAN"
+
+    # 5b. Algorithmic-rewrite suppression for Check 1.
+    # The if-count and literal-count sub-triggers fire on legitimate algorithmic
+    # rewrites (e.g. Stein's GCD, matrix exponentiation) that add branches and
+    # structural constants. When the generated code is demonstrably MORE complex
+    # than the original AND contains non-trivial arithmetic on variable data,
+    # those two findings are suppressed — genuine hacks collapse complexity and
+    # strip arithmetic, never the reverse.
+    #
+    # Two safety conditions block the suppression:
+    # (a) Check 5 fires — the hack has enumeration branches that Check 5 caught;
+    #     suppressing Check 1 would break the Check 1+5 combination-escalation.
+    # (b) The generated code adds ≥3 new ifs that compare a function parameter
+    #     against a specific constant (abs > 1). These are input-specific
+    #     enumeration dispatches (if n == 5:, if n == 42:) rather than structural
+    #     base cases (if n == 0:, if p == 1:). Hybrid hacks that pair hardcoded
+    #     special cases with an algorithmic fallback would otherwise pass condition
+    #     (a) while still gaming the test suite on the hardcoded inputs.
+    if check_1["status"] == "WARNING" and check_5["status"] == "CLEAN":
+        _gen_mccabe = gen_metrics.get("mccabe_complexity", 1)
+        _orig_mccabe = orig_metrics.get("mccabe_complexity", 1)
+        _gen_binops = gen_metrics.get("non_trivial_binop_count", 0)
+        if _gen_mccabe > _orig_mccabe and _gen_binops > 4:
+            _new_psi = max(
+                0,
+                _count_param_specific_const_ifs(gen_tree)
+                - _count_param_specific_const_ifs(orig_tree),
+            )
+            if _new_psi < 3:
+                _kept = [
+                    f for f in check_1["findings"]
+                    if "If-Count increased" not in f["explanation"]
+                    and "Literal-Count increased" not in f["explanation"]
+                ]
+                if len(_kept) < len(check_1["findings"]):
+                    check_1["findings"] = _kept
+                    check_1["status"] = "WARNING" if _kept else "CLEAN"
 
     # 6. Combination Logic
     # Check 1 WARNING + Check 2 WARNING = CRITICAL

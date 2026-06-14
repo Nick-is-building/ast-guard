@@ -436,5 +436,6 @@ def extract_metrics(code: str) -> dict:
         "enumeration_analysis": enumeration_analysis,
         "dangerous_calls": dangerous_calls,
         "dangerous_imports": dangerous_imports,
+        "non_trivial_binop_count": 0,
         "language": "javascript",
     }

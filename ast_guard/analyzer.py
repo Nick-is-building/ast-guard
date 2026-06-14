@@ -263,6 +263,22 @@ def count_set_literals(tree):
             max_size = max(max_size, len(node.elts))
     return max_size
 
+def count_non_trivial_binops(tree):
+    """Counts BinOp nodes where at least one operand is not a constant.
+
+    A binop is trivial only when both operands are literals (e.g. 1 + 2).
+    Non-trivial binops indicate arithmetic on variable data — a strong signal
+    that the code is genuinely computing rather than returning hardcoded results.
+    Used by the algorithmic-rewrite suppression rule in scan().
+    """
+    count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BinOp):
+            if not (isinstance(node.left, ast.Constant) and isinstance(node.right, ast.Constant)):
+                count += 1
+    return count
+
+
 def count_dict_literals(tree):
     """
     Returns the maximum number of keys in any dict literal (ast.Dict) in the tree.
@@ -548,6 +564,9 @@ def extract_metrics(code: str) -> dict:
     # 10. Per-function extensional enumeration analysis (v1.3, Check 5)
     enumeration_analysis = count_enumeration_pattern(tree)
 
+    # 11. Non-trivial binary operations (v2.2.1, Check 1 suppression)
+    non_trivial_binop_count = count_non_trivial_binops(tree)
+
     return {
         "if_count": if_count,
         "guard_clause_count": guard_clause_count,
@@ -563,4 +582,5 @@ def extract_metrics(code: str) -> dict:
         "max_dict_literal_size": max_dict_literal_size,
         "function_complexities": function_complexities,
         "enumeration_analysis": enumeration_analysis,
+        "non_trivial_binop_count": non_trivial_binop_count,
     }
