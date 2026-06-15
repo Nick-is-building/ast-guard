@@ -313,7 +313,7 @@ def scan_multilang(
     Args:
         original_code: The original/baseline code.
         generated_code: The LLM-generated code.
-        language: One of 'bash', 'javascript'.
+        language: One of 'bash', 'javascript', 'typescript'.
         mode: 'strict', 'standard', or 'audit'.
         config_override: Optional config overrides dict.
         telemetry_enabled: Whether to log telemetry.
@@ -655,7 +655,7 @@ def scan_standalone(
     elif language == "bash":
         from ast_guard import lang_bash_behavioral as _bash_beh
         _c6_result_raw = _bash_beh.score(code, gen_metrics)
-    elif language == "javascript":
+    elif language in ("javascript", "typescript"):
         from ast_guard import lang_javascript_behavioral as _js_beh
         _c6_result_raw = _js_beh.score(code, gen_metrics)
     else:

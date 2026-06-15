@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-SUPPORTED_LANGUAGES = ("python", "bash", "javascript")
+SUPPORTED_LANGUAGES = ("python", "bash", "javascript", "typescript")
 
 
 def is_multilang_available() -> bool:
@@ -32,9 +32,19 @@ def is_multilang_available() -> bool:
     except ImportError:
         return False
 
+
+def is_typescript_available() -> bool:
+    """Return True if the tree-sitter-typescript extra is installed."""
+    try:
+        import tree_sitter_typescript  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
 _SHEBANG_BASH = re.compile(r"^#!.*\b(bash|/sh|zsh|ksh|dash|ash)\b")
 _SHEBANG_PYTHON = re.compile(r"^#!.*\bpython[23]?\b")
 _SHEBANG_JS = re.compile(r"^#!.*\b(node|deno|bun)\b")
+# TypeScript has no standard shebang; ts-node scripts sometimes use node shebang.
 
 # Python signals.
 _PY_PATTERNS = (
@@ -67,6 +77,20 @@ _JS_PATTERNS = (
     (re.compile(r"`[^`]*\$\{"), 1),
 )
 
+# TypeScript signals (must score higher than JS on TS-specific syntax).
+_TS_PATTERNS = (
+    (re.compile(r"\binterface\s+\w+\s*\{", re.M), 4),
+    (re.compile(r"\btype\s+\w+\s*="), 3),
+    (re.compile(r"\benum\s+\w+\s*\{"), 3),
+    (re.compile(r"\bimplements\s+\w+"), 3),
+    (re.compile(r"\breadonly\s+\w+"), 2),
+    (re.compile(r"\bdeclare\s+(class|function|const|var|let|module|namespace)\b"), 2),
+    (re.compile(r":\s*(string|number|boolean|void|any|never|unknown)\b"), 2),
+    (re.compile(r"<\w+\s*extends\s+\w+>"), 2),
+    (re.compile(r"\?\s*:"), 1),  # optional property `foo?: string`
+    (re.compile(r"\babstract\s+(class|method)\b"), 2),
+)
+
 # Bash signals.
 _BASH_PATTERNS = (
     (re.compile(r"^\s*(if|elif|while|until)\s+\[\[?", re.M), 3),
@@ -93,7 +117,8 @@ def detect_language_with_info(code: str) -> dict:
     Detect the source language of ``code`` and report *how* the decision was made.
 
     Returns a dict:
-        ``language``  — one of ``"python"``, ``"bash"``, ``"javascript"``, or ``"unknown"``
+        ``language``  — one of ``"python"``, ``"bash"``, ``"javascript"``,
+                        ``"typescript"``, or ``"unknown"``
         ``method``    — ``"shebang"`` | ``"keyword_score"`` | ``"unknown"``
         ``score``     — winning keyword score (0 when method is not ``"keyword_score"``)
     """
@@ -109,11 +134,18 @@ def detect_language_with_info(code: str) -> dict:
         if _SHEBANG_BASH.match(first_line):
             return {"language": "bash", "method": "shebang", "score": 0}
 
+    ts_score = _score(code, _TS_PATTERNS)
     scores = {
         "python": _score(code, _PY_PATTERNS),
         "javascript": _score(code, _JS_PATTERNS),
         "bash": _score(code, _BASH_PATTERNS),
+        # TypeScript: JS score + TS-specific bonus; wins over plain JS when
+        # TS-specific patterns are present.
+        "typescript": _score(code, _JS_PATTERNS) + ts_score,
     }
+    # A code that scores TS-specific patterns but no JS at all is still TS.
+    if ts_score > 0 and scores["typescript"] == ts_score:
+        scores["typescript"] = ts_score
     best = max(scores, key=scores.get)
     if scores[best] == 0:
         return {"language": "unknown", "method": "unknown", "score": 0}
@@ -124,34 +156,14 @@ def detect_language(code: str) -> str:
     """
     Detect the source language of ``code``.
 
-    Returns one of ``"python"``, ``"bash"``, ``"javascript"``, or
-    ``"unknown"``. Detection is purely lexical:
+    Returns one of ``"python"``, ``"bash"``, ``"javascript"``,
+    ``"typescript"``, or ``"unknown"``. Detection is purely lexical:
 
         1. Look at the shebang line if present.
         2. Otherwise, score each language's keyword/syntax markers and
            return the winner if any score is positive.
     """
-    if not code or not code.strip():
-        return "unknown"
-
-    first_line = code.lstrip().split("\n", 1)[0]
-    if first_line.startswith("#!"):
-        if _SHEBANG_PYTHON.match(first_line):
-            return "python"
-        if _SHEBANG_JS.match(first_line):
-            return "javascript"
-        if _SHEBANG_BASH.match(first_line):
-            return "bash"
-
-    scores = {
-        "python": _score(code, _PY_PATTERNS),
-        "javascript": _score(code, _JS_PATTERNS),
-        "bash": _score(code, _BASH_PATTERNS),
-    }
-    best = max(scores, key=scores.get)
-    if scores[best] == 0:
-        return "unknown"
-    return best
+    return detect_language_with_info(code)["language"]
 
 
 def extract_metrics_multilang(code: str, language: str | None = None) -> dict:
@@ -183,6 +195,10 @@ def extract_metrics_multilang(code: str, language: str | None = None) -> dict:
     if language == "javascript":
         from . import lang_javascript
         return lang_javascript.extract_metrics(code)
+
+    if language == "typescript":
+        from . import lang_typescript
+        return lang_typescript.extract_metrics(code)
 
     raise ValueError(
         f"Unsupported language: {language!r}. "

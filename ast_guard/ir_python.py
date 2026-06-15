@@ -40,6 +40,13 @@ _JS_ENHANCEMENTS = EnhancementFlags(
     match_case_enumeration="partial",
 )
 
+# TS: same as JS + docstring_exclusion=partial (JSDoc appears as comment nodes,
+# not string literals; flag is informational rather than actively filtered).
+_TS_ENHANCEMENTS = EnhancementFlags(
+    match_case_enumeration="partial",
+    docstring_exclusion="partial",
+)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -143,6 +150,8 @@ def metrics_to_stub_ir(metrics: dict, language: str = "python") -> CodeIR:
         enh = _PYTHON_ENHANCEMENTS
     elif language == "javascript":
         enh = _JS_ENHANCEMENTS
+    elif language == "typescript":
+        enh = _TS_ENHANCEMENTS
     else:
         enh = EnhancementFlags()  # all not_applicable
 
@@ -181,6 +190,10 @@ def empty_ir(language: str = "python") -> CodeIR:
     """
     if language == "python":
         enh = _PYTHON_ENHANCEMENTS
+    elif language == "javascript":
+        enh = _JS_ENHANCEMENTS
+    elif language == "typescript":
+        enh = _TS_ENHANCEMENTS
     else:
         enh = EnhancementFlags()
     return CodeIR(language=language, enhancements=enh)
