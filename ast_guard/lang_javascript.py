@@ -525,5 +525,6 @@ def extract_metrics(code: str) -> dict:
         "dangerous_imports": dangerous_imports,
         "non_trivial_binop_count": non_trivial_binop_count,
         "dangerous_call_events": dangerous_call_events,
+        "dispatch_analysis": [],  # not_applicable for JS; planned for next block
         "language": "javascript",
     }

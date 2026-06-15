@@ -64,35 +64,45 @@ def _extract_non_docstring_strings(tree: ast.Module) -> set:
 
 
 def _build_per_function(metrics: dict) -> list:
-    """Merge function_complexities and enumeration_analysis into FunctionIR list.
+    """Merge function_complexities, enumeration_analysis, and dispatch_analysis
+    into a FunctionIR list.
 
-    function_complexities uses qualified names (ClassName.method); enumeration_
-    analysis uses bare names. We attempt a best-effort merge by matching the
-    bare name (last component) of each qualified name. Collisions (two methods
-    with the same bare name in different classes) produce a merge with the first
-    enumeration_analysis entry found — acceptable because Check 5 reads
-    enumeration_analysis directly, not per_function.
+    function_complexities uses qualified names (ClassName.method); the other
+    two use bare names. We merge by matching the bare name (last component).
+    Collisions (two methods with the same bare name in different classes) produce
+    a merge with the first matching entry found — acceptable because Check 5
+    reads enumeration_analysis and dispatch_analysis directly, not per_function.
     """
     func_comps: dict = metrics.get("function_complexities", {}) or {}
     enum_analysis: list = metrics.get("enumeration_analysis", []) or []
+    dispatch_analysis: list = metrics.get("dispatch_analysis", []) or []
 
-    # bare-name -> first matching enum entry
+    # bare-name -> first matching entry maps
     enum_map: dict = {}
     for entry in enum_analysis:
         bare = entry.get("name", "")
         if bare and bare not in enum_map:
             enum_map[bare] = entry
 
+    dispatch_map: dict = {}
+    for entry in dispatch_analysis:
+        bare = entry.get("name", "")
+        if bare and bare not in dispatch_map:
+            dispatch_map[bare] = entry
+
     result = []
     for qname, mccabe in sorted(func_comps.items()):
         bare = qname.rsplit(".", 1)[-1]
         ed = enum_map.get(bare, {})
+        dd = dispatch_map.get(bare, {})
         result.append(FunctionIR(
             identity=qname,
             mccabe=mccabe,
             total_ifs=ed.get("total_ifs", 0),
             enumeration_ifs=ed.get("enumeration_ifs", 0),
             loop_count=ed.get("loop_count", 0),
+            dispatch_table_size=dd.get("dispatch_table_size", 0),
+            dispatch_all_literal=dd.get("dispatch_all_literal", False),
         ))
     return result
 

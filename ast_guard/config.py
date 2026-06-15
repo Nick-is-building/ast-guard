@@ -15,6 +15,8 @@ DEFAULT_CONFIG = {
         "dict_literal_max": 15,        # v2.0.1: Max dict literal size before allowlist override is blocked
         "enumeration_ratio": 0.70,     # v1.3: Min share of constant-equality branches for Check 5
         "enumeration_min_ifs": 5,      # v1.3: Min total branches for Check 5 to fire
+        "dispatch_min_size": 5,        # Check 5 dict-dispatch: pair-mode min table entries
+        "dispatch_standalone_min_size": 8,  # Check 5 dict-dispatch: standalone min table entries
     },
     "imports": {
         "blocklist": [

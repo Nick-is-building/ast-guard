@@ -279,6 +279,148 @@ def count_non_trivial_binops(tree):
     return count
 
 
+def _all_literal_dict(dict_node: ast.Dict) -> bool:
+    """True when every key and value in dict_node is an ast.Constant (no **unpacking)."""
+    for k, v in zip(dict_node.keys, dict_node.values):
+        if k is None:  # **unpacking placeholder
+            return False
+        if not isinstance(k, ast.Constant):
+            return False
+        if not isinstance(v, ast.Constant):
+            return False
+    return True
+
+
+def _func_param_names(func_node) -> frozenset:
+    """Flat set of all formal parameter names for a function node."""
+    names = set()
+    args = func_node.args
+    for a in args.args + args.posonlyargs + args.kwonlyargs:
+        names.add(a.arg)
+    if args.vararg:
+        names.add(args.vararg.arg)
+    if args.kwarg:
+        names.add(args.kwarg.arg)
+    return frozenset(names)
+
+
+def _is_param_key(key_node, params: frozenset) -> bool:
+    """True when key_node is directly a function parameter name (not a derived expression)."""
+    return isinstance(key_node, ast.Name) and key_node.id in params
+
+
+def _check_dispatch_return(ret, params, local_dicts, module_dicts):
+    """Check whether ``ret`` is a dict-dispatch lookup keyed by a parameter.
+
+    Detects:
+      {k: v, ...}[param]          -- inline dict subscript
+      TABLE[param]                -- name subscript, local or module scope
+      TABLE.get(param)            -- .get() form, local or module scope
+      TABLE.get(param, default)   -- .get() with default
+
+    Returns (table_size, all_literal) or (0, False) when the pattern is absent.
+    """
+    # Subscript form: expr[param]
+    if isinstance(ret, ast.Subscript):
+        if not _is_param_key(ret.slice, params):
+            return 0, False
+        src = ret.value
+        if isinstance(src, ast.Dict):
+            return len(src.keys), _all_literal_dict(src)
+        if isinstance(src, ast.Name):
+            d = local_dicts.get(src.id) or module_dicts.get(src.id)
+            if d is not None:
+                return len(d.keys), _all_literal_dict(d)
+
+    # .get() form: TABLE.get(param [, default])
+    if (isinstance(ret, ast.Call)
+            and isinstance(ret.func, ast.Attribute)
+            and ret.func.attr == "get"
+            and len(ret.args) >= 1
+            and _is_param_key(ret.args[0], params)):
+        src = ret.func.value
+        if isinstance(src, ast.Name):
+            d = local_dicts.get(src.id) or module_dicts.get(src.id)
+            if d is not None:
+                return len(d.keys), _all_literal_dict(d)
+
+    return 0, False
+
+
+def _scan_dispatch_in_func(func_node, module_dicts):
+    """Scan one function for the largest dict-dispatch-return pattern.
+
+    Uses a BFS that does not descend into nested function/class bodies so
+    each function's metrics reflect its own scope only.
+    """
+    params = _func_param_names(func_node)
+    if not params:
+        return 0, False
+
+    local_dicts: dict = {}
+    returns: list = []
+
+    queue = list(ast.iter_child_nodes(func_node))
+    while queue:
+        node = queue.pop(0)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and isinstance(node.value, ast.Dict):
+                    local_dicts[t.id] = node.value
+        if isinstance(node, ast.Return) and node.value is not None:
+            returns.append(node.value)
+        for c in ast.iter_child_nodes(node):
+            queue.append(c)
+
+    max_size = 0
+    all_lit = False
+    for ret in returns:
+        sz, al = _check_dispatch_return(ret, params, local_dicts, module_dicts)
+        if sz > max_size:
+            max_size = sz
+            all_lit = al
+    return max_size, all_lit
+
+
+def analyze_dispatch_tables(tree) -> list:
+    """Per-function dict-dispatch memorisation detection.
+
+    For each FunctionDef / AsyncFunctionDef, returns a dict:
+        {"name": str, "dispatch_table_size": int, "dispatch_all_literal": bool}
+
+    dispatch_table_size > 0 means the function has a dominant return of the
+    form ``return TABLE[param]`` or ``return TABLE.get(param)`` where TABLE is
+    a constant dict (all keys and values are ast.Constant) and param is a
+    function parameter.  The field records the number of entries in that dict.
+
+    dispatch_all_literal is True only when ALL keys and values are ast.Constant.
+    A table with computed values (e.g. values that are expressions) sets this
+    False so runtime caches are not flagged.
+
+    Module-level dict assignments are collected as a fallback for the common
+    pattern ``_ANSWERS = {1: 42, ...}`` followed by ``return _ANSWERS[n]``.
+    """
+    module_dicts: dict = {}
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and isinstance(node.value, ast.Dict):
+                    module_dicts[t.id] = node.value
+
+    results = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            size, all_lit = _scan_dispatch_in_func(node, module_dicts)
+            results.append({
+                "name": node.name,
+                "dispatch_table_size": size,
+                "dispatch_all_literal": all_lit,
+            })
+    return results
+
+
 def count_dict_literals(tree):
     """
     Returns the maximum number of keys in any dict literal (ast.Dict) in the tree.
@@ -567,6 +709,9 @@ def extract_metrics(code: str) -> dict:
     # 11. Non-trivial binary operations (v2.2.1, Check 1 suppression)
     non_trivial_binop_count = count_non_trivial_binops(tree)
 
+    # 12. Per-function dict-dispatch memorisation analysis (Check 5 sub-rule)
+    dispatch_analysis = analyze_dispatch_tables(tree)
+
     return {
         "if_count": if_count,
         "guard_clause_count": guard_clause_count,
@@ -583,4 +728,5 @@ def extract_metrics(code: str) -> dict:
         "function_complexities": function_complexities,
         "enumeration_analysis": enumeration_analysis,
         "non_trivial_binop_count": non_trivial_binop_count,
+        "dispatch_analysis": dispatch_analysis,
     }

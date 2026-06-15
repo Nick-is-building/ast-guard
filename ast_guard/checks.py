@@ -660,6 +660,63 @@ def check_5_extensional_enumeration(orig_ir: "CodeIR", gen_ir: "CodeIR", config:
                 )
             })
 
+    # -----------------------------------------------------------------------
+    # Dict-dispatch sub-rule: return TABLE[param] with an all-literal table
+    #
+    # Same failure mode as if/elif enumeration but via a dict lookup. Only
+    # fires when the table is all-literal (all keys and values are constants)
+    # and the key is directly a function parameter — this excludes runtime
+    # caches (memoize, lru_cache tables with computed values) and lookup
+    # tables where the values do real work.
+    #
+    # Pair mode:  threshold = dispatch_min_size (default 5); also requires the
+    #   table to be NEW in gen (orig had a smaller or absent table). This blocks
+    #   FPs on pre-existing dicts that appear in both orig and gen.
+    # Standalone: threshold = dispatch_standalone_min_size (default 8);
+    #   no orig baseline available, so more conservative to limit FPs on small
+    #   legitimate config maps.
+    # -----------------------------------------------------------------------
+    dispatch_min = thresholds.get("dispatch_min_size", 5)
+    dispatch_standalone_min = thresholds.get("dispatch_standalone_min_size", 8)
+
+    # Build orig dispatch map for the pair-mode new-table guard.
+    # empty_ir() has per_function=[] so orig_by_id is empty → standalone path.
+    orig_by_id: dict = {}
+    for f in (orig_ir.per_function or []):
+        orig_by_id[f.identity] = f
+    is_pair_mode = bool(orig_by_id)
+
+    for func_ir in (gen_ir.per_function or []):
+        dts = func_ir.dispatch_table_size
+        if dts == 0 or not func_ir.dispatch_all_literal:
+            continue
+
+        if is_pair_mode:
+            if dts < dispatch_min:
+                continue
+            # Guard: table existed in orig at or above threshold → pre-existing.
+            orig_f = orig_by_id.get(func_ir.identity)
+            if orig_f is not None and orig_f.dispatch_table_size >= dispatch_min:
+                continue
+        else:
+            # Standalone: higher threshold + require low complexity so we don't
+            # flag functions with real logic that happen to have a large dict.
+            if dts < dispatch_standalone_min:
+                continue
+            if func_ir.mccabe > 3:
+                continue
+
+        findings.append({
+            "severity": "WARNING",
+            "line": None,
+            "explanation": (
+                f"Function '{func_ir.identity}' appears to return a memorised "
+                f"answer table ({dts}-entry all-literal dict keyed by a "
+                f"parameter) rather than computing a result. "
+                f"This is a dict-dispatch memorisation pattern."
+            ),
+        })
+
     status = "WARNING" if findings else "CLEAN"
     return {
         "status": status,

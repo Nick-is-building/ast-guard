@@ -414,5 +414,6 @@ def extract_metrics(code: str) -> dict:
         "enumeration_analysis": enumeration_analysis,
         "dangerous_calls": dangerous_calls,
         "non_trivial_binop_count": 0,
+        "dispatch_analysis": [],  # not_applicable for Bash
         "language": "bash",
     }

@@ -57,6 +57,14 @@ class FunctionIR:
     line: Optional[int] = None
     normalized_node_seq: Optional[list] = None  # reserved for TED
 
+    # Dict-dispatch memorisation signal (Check 5 sub-rule)
+    # dispatch_table_size > 0 iff the function has a dominant return that is a
+    # subscript/get on a dict literal keyed by a function parameter. Only set
+    # when the key is directly a parameter name (not a derived expression) so
+    # runtime caches (memoize(fn)) are not flagged.
+    dispatch_table_size: int = 0
+    dispatch_all_literal: bool = False  # all keys AND values are ast.Constant
+
 
 @dataclass
 class DangerousCallEvent:
