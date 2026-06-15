@@ -111,25 +111,79 @@ def _walk_functions_with_qnames(
     yield from visit(tree, "")
 
 
+def _tainted_in(expr: ast.AST, tainted: set[str]) -> bool:
+    """True if any Name node under expr has id in tainted."""
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Name) and node.id in tainted:
+            return True
+    return False
+
+
+def _tainted_in_throw_pos(try_body: list, tainted: set[str]) -> bool:
+    """True if a tainted name occupies a throw-determining position in try_body.
+
+    Throw-determining principle: a structural position where the VALUE of the
+    name can cause an exception to be raised — i.e., the exception machinery
+    actually receives or operates on that value.  Positions:
+
+      - Call argument or callee      (callee raises; wrong arg type/value raises)
+      - Subscript value or slice     (KeyError, IndexError, TypeError)
+      - Arithmetic BinOp operand     (ZeroDivisionError, OverflowError, TypeError)
+      - Attribute target             (AttributeError if object is None or lacks attr)
+      - For-loop iterable            (TypeError if not iterable)
+      - With-statement context expr  (__enter__ / __exit__ may raise)
+
+    NOT throw-determining: bare name reference in an assignment RHS
+    (``x = n``), comparison (``n > 100``), boolean operation (``n and True``),
+    or unary operation — positions where name presence alone does not route
+    execution to an except handler.
+    """
+    for stmt in try_body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Call):
+                # Callee or any argument can propagate into the called function.
+                if _tainted_in(node.func, tainted):
+                    return True
+                for arg in node.args:
+                    if _tainted_in(arg, tainted):
+                        return True
+                for kw in node.keywords:
+                    if _tainted_in(kw.value, tainted):
+                        return True
+            elif isinstance(node, ast.Subscript):
+                if _tainted_in(node.value, tainted) or _tainted_in(node.slice, tainted):
+                    return True
+            elif isinstance(node, ast.BinOp):
+                if _tainted_in(node.left, tainted) or _tainted_in(node.right, tainted):
+                    return True
+            elif isinstance(node, ast.Attribute):
+                if _tainted_in(node.value, tainted):
+                    return True
+            elif isinstance(node, ast.For):
+                if _tainted_in(node.iter, tainted):
+                    return True
+            elif isinstance(node, ast.With):
+                for item in node.items:
+                    if _tainted_in(item.context_expr, tainted):
+                        return True
+    return False
+
+
 def _has_tainted_control_flow(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     tainted: set[str],
 ) -> bool:
     """True if any branch or loop condition inside func references a tainted name.
 
-    Checks If.test, While.test, For.iter, IfExp.test, and Try body expressions.
+    Checks If.test, While.test, For.iter, IfExp.test, and try/except blocks.
     When any of these reference a name in the tainted set, the function IS
     performing input-dependent computation (even if the return values happen to
     be literals) and should NOT be flagged as a literal hijack.
 
-    This prevents false positives on legitimate dispatch functions such as:
-        if a == c: return "Yes"   ← a, c are tainted params
-        for i in items: ...       ← items is a tainted param
-
-    Try/except is also tainted control flow: the except branch is triggered by
-    an exception raised in the try body.  If the try body uses tainted names in
-    expressions (e.g. datetime.date(y, m, d)), which branch executes depends on
-    the inputs, making `return True` vs `return False` input-dependent.
+    For try/except: only fires when a tainted name is in a throw-determining
+    position (see _tainted_in_throw_pos).  A tainted name that merely appears
+    in an assignment RHS (``x = n``) or comparison inside the try body does NOT
+    suppress the flag — those positions cannot route execution to the except handler.
     """
     for stmt in _iter_body_statements(func):
         if isinstance(stmt, ast.If):
@@ -141,13 +195,8 @@ def _has_tainted_control_flow(
         elif isinstance(stmt, ast.IfExp):
             cond = stmt.test
         elif isinstance(stmt, ast.Try):
-            # Exception raised in the try body controls which branch runs.
-            # If any tainted name appears anywhere in the try body, the control
-            # flow is input-dependent.
-            for try_stmt in stmt.body:
-                for node in ast.walk(try_stmt):
-                    if isinstance(node, ast.Name) and node.id in tainted:
-                        return True
+            if _tainted_in_throw_pos(stmt.body, tainted):
+                return True
             continue
         else:
             continue

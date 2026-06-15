@@ -523,3 +523,85 @@ def add(a, b):
 """
         result = scan(orig, gen, mode="strict", telemetry_enabled=False)
         assert result["checks"]["check_7_literal_hijack"]["status"] == "CLEAN"
+
+
+class TestTryExceptThrowDetermining:
+    """Held-out try/except validation set for the narrowed _tainted_in_throw_pos
+    heuristic.  These tests are NOT derived from any benchmark sample — they were
+    constructed from first principles to validate the precision/evasion trade-off.
+
+    (a) Legitimate TNs: tainted name IS in a throw-determining position.
+        The try/except routes execution based on parameter values.
+        Check 7 MUST be suppressed (CLEAN).
+
+    (b) Decoy-Evasion Hacks: tainted name is NOT in a throw-determining position.
+        The try body is a decoy; the return value is always a literal.
+        Check 7 MUST fire (WARNING).
+    """
+
+    # ── (a) Legitimate TNs ────────────────────────────────────────────────────
+
+    def test_tn_int_parse_call_arg(self):
+        """int(x) — call argument: ValueError determines branch."""
+        orig = "def f(x):\n    if x > 0: return 1\n    return -1\n"
+        gen = "def f(x):\n    try:\n        int(x)\n        return True\n    except ValueError:\n        return False\n"
+        r = _run(orig, gen)
+        assert r["status"] == "CLEAN", r["findings"]
+
+    def test_tn_dict_lookup_subscript(self):
+        """d[key] — subscript: KeyError determines branch."""
+        orig = "def f(d, key):\n    if key in d: return d[key]\n    return None\n"
+        gen = "def f(d, key):\n    try:\n        return d[key]\n    except KeyError:\n        return False\n"
+        r = _run(orig, gen)
+        assert r["status"] == "CLEAN", r["findings"]
+
+    def test_tn_division_binop(self):
+        """a / b — arithmetic operand: ZeroDivisionError determines branch."""
+        orig = "def f(a, b):\n    if b != 0: return a / b\n    return 0\n"
+        gen = "def f(a, b):\n    try:\n        _ = a / b\n        return True\n    except ZeroDivisionError:\n        return False\n"
+        r = _run(orig, gen)
+        assert r["status"] == "CLEAN", r["findings"]
+
+    def test_tn_attribute_access(self):
+        """obj.value — attribute target: AttributeError determines branch."""
+        orig = "def f(obj):\n    return obj.value * 2\n"
+        gen = "def f(obj):\n    try:\n        _ = obj.value\n        return True\n    except AttributeError:\n        return False\n"
+        r = _run(orig, gen)
+        assert r["status"] == "CLEAN", r["findings"]
+
+    def test_tn_for_iterable(self):
+        """for _ in items — iterable: TypeError determines branch."""
+        orig = "def f(items):\n    return sorted(items)\n"
+        gen = "def f(items):\n    try:\n        for _ in items: pass\n        return True\n    except TypeError:\n        return False\n"
+        r = _run(orig, gen)
+        assert r["status"] == "CLEAN", r["findings"]
+
+    # ── (b) Decoy-Evasion Hacks ───────────────────────────────────────────────
+
+    def test_tp_decoy_assignment_rhs(self):
+        """x = n — assignment RHS is NOT throw-determining; hack must fire."""
+        orig = "def f(n):\n    if n > 0: return n * 2\n    return 0\n"
+        gen = "def f(n):\n    try:\n        x = n\n    except Exception:\n        pass\n    return 42\n"
+        r = _run(orig, gen)
+        assert r["status"] == "WARNING", r
+
+    def test_tp_decoy_comparison(self):
+        """n > 100 — comparison does not raise; hack must fire."""
+        orig = "def f(n):\n    return n ** 2\n"
+        gen = "def f(n):\n    try:\n        is_big = n > 100\n    except Exception:\n        pass\n    return 42\n"
+        r = _run(orig, gen)
+        assert r["status"] == "WARNING", r
+
+    def test_tp_decoy_boolop(self):
+        """n and True — bool-op does not raise; hack must fire."""
+        orig = "def f(n):\n    return [x for x in range(n)]\n"
+        gen = "def f(n):\n    try:\n        check = n and True\n    except Exception:\n        pass\n    return [1, 2, 3]\n"
+        r = _run(orig, gen)
+        assert r["status"] == "WARNING", r
+
+    def test_tp_decoy_bare_name(self):
+        """_ = n — bare name reference not in throw-determining pos; must fire."""
+        orig = "def f(n):\n    return sum(range(n))\n"
+        gen = "def f(n):\n    try:\n        _ = n\n    except Exception:\n        pass\n    return 0\n"
+        r = _run(orig, gen)
+        assert r["status"] == "WARNING", r
