@@ -55,7 +55,9 @@ def calculate_fingerprint(gen_metrics: dict) -> str:
         else:
             metrics_clean[k] = v
 
-    data_str = json.dumps({"metrics": metrics_clean}, sort_keys=True)
+    # default=str handles non-JSON-serializable values (e.g. DangerousCallEvent
+    # dataclass objects from the JS adapter) without crashing the fingerprint.
+    data_str = json.dumps({"metrics": metrics_clean}, sort_keys=True, default=str)
     return hashlib.sha256(data_str.encode("utf-8")).hexdigest()
 
 def log_scan(orig_hash: str, gen_hash: str, orig_metrics: dict, gen_metrics: dict, check_results: dict, transformations: list, mode: str, verdict: str, confidence: int = 0) -> dict:

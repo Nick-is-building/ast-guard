@@ -19,7 +19,7 @@ from ast_guard.ir import CodeIR, DangerousCallEvent, EnhancementFlags, FunctionI
 __all__ = ["build_ir", "metrics_to_stub_ir", "empty_ir"]
 
 # ---------------------------------------------------------------------------
-# Python enhancement flags
+# Per-language enhancement flag sets
 # ---------------------------------------------------------------------------
 
 _PYTHON_ENHANCEMENTS = EnhancementFlags(
@@ -32,6 +32,12 @@ _PYTHON_ENHANCEMENTS = EnhancementFlags(
     dataflow_independence="supported",
     intent_mismatch="supported",
     normalized_tree="not_applicable",  # reserved for future TED work
+)
+
+# Flag C: switch/case enumeration is partial — only literal-valued cases are
+# detected. Object-as-lookup-table dispatch requires dataflow (not_applicable).
+_JS_ENHANCEMENTS = EnhancementFlags(
+    match_case_enumeration="partial",
 )
 
 
@@ -135,6 +141,8 @@ def metrics_to_stub_ir(metrics: dict, language: str = "python") -> CodeIR:
     if language == "python":
         # Standalone Python path: enhancements still supported but no tree
         enh = _PYTHON_ENHANCEMENTS
+    elif language == "javascript":
+        enh = _JS_ENHANCEMENTS
     else:
         enh = EnhancementFlags()  # all not_applicable
 
@@ -161,7 +169,7 @@ def metrics_to_stub_ir(metrics: dict, language: str = "python") -> CodeIR:
         functional_call_count=metrics.get("functional_call_count", 0),
         per_function=_build_per_function(metrics),
         enumeration_analysis=metrics.get("enumeration_analysis", []) or [],
-        dangerous_call_events=[],
+        dangerous_call_events=metrics.get("dangerous_call_events", []),
         enhancements=enh,
     )
 

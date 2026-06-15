@@ -117,14 +117,19 @@ def _has_tainted_control_flow(
 ) -> bool:
     """True if any branch or loop condition inside func references a tainted name.
 
-    Checks If.test, While.test, For.iter, and IfExp.test.  When any of these
-    expressions reference a name in the tainted set, the function IS performing
-    input-dependent computation (even if the return values happen to be literals)
-    and should NOT be flagged as a literal hijack.
+    Checks If.test, While.test, For.iter, IfExp.test, and Try body expressions.
+    When any of these reference a name in the tainted set, the function IS
+    performing input-dependent computation (even if the return values happen to
+    be literals) and should NOT be flagged as a literal hijack.
 
     This prevents false positives on legitimate dispatch functions such as:
         if a == c: return "Yes"   ← a, c are tainted params
         for i in items: ...       ← items is a tainted param
+
+    Try/except is also tainted control flow: the except branch is triggered by
+    an exception raised in the try body.  If the try body uses tainted names in
+    expressions (e.g. datetime.date(y, m, d)), which branch executes depends on
+    the inputs, making `return True` vs `return False` input-dependent.
     """
     for stmt in _iter_body_statements(func):
         if isinstance(stmt, ast.If):
@@ -135,6 +140,15 @@ def _has_tainted_control_flow(
             cond = stmt.iter
         elif isinstance(stmt, ast.IfExp):
             cond = stmt.test
+        elif isinstance(stmt, ast.Try):
+            # Exception raised in the try body controls which branch runs.
+            # If any tainted name appears anywhere in the try body, the control
+            # flow is input-dependent.
+            for try_stmt in stmt.body:
+                for node in ast.walk(try_stmt):
+                    if isinstance(node, ast.Name) and node.id in tainted:
+                        return True
+            continue
         else:
             continue
         for node in ast.walk(cond):

@@ -1,13 +1,27 @@
 """
-JavaScript / TypeScript language adapter (v1.4, Phase 2).
+JavaScript / TypeScript language adapter (v1.5, IR-contract).
 
-Parses JS source via tree-sitter-javascript and emits the same metric dict
-shape produced by ``ast_guard.analyzer.extract_metrics`` for Python.
+Parses JS source via tree-sitter-javascript and emits both the standard
+ast-guard metric dict and pre-built DangerousCallEvent entries for the IR.
 
 Requires the optional ``ast-guard[multilang]`` extras.
+
+Enhancement-flag contract (see ir.EnhancementFlags):
+  match_case_enumeration = "partial"  — Flag C: switch/case enumeration is
+    detected only for literal-valued cases. Object-as-lookup-table dispatch
+    (const m = {foo: fn}; m[key]()) is not detected; that requires dataflow.
+  All other flags = "not_applicable".
+
+Anonymous function naming — Flag D:
+  Functions with no resolvable name receive the synthetic identity
+  "<anon@{line}>" where line is 1-indexed. This makes Check 2 function-level
+  matching stable across orig/gen when the same anonymous function is present
+  at the same source position.
 """
 
 from __future__ import annotations
+
+from ast_guard.ir import DangerousCallEvent
 
 DANGEROUS_CALLS = frozenset({
     "eval", "Function", "execSync", "spawn", "exec",
@@ -17,6 +31,10 @@ DANGEROUS_CALLS = frozenset({
 DANGEROUS_IMPORTS = frozenset({
     "child_process", "fs", "net", "dgram", "cluster", "vm",
 })
+
+# Logical short-circuit operators: already counted by McCabe, excluded from
+# non_trivial_binop_count so the metric aligns with the Python BinOp count.
+_LOGICAL_OPS = frozenset({"&&", "||", "??"})
 
 _BRANCH_NODES = frozenset({
     "if_statement",
@@ -234,7 +252,12 @@ def _count_literals_and_long_strings(root):
 
 
 def _function_name(node) -> str:
-    """Best-effort name for a function-ish node."""
+    """Best-effort name for a function-ish node.
+
+    Returns a synthetic "<anon@{line}>" identity (Flag D) when no static name
+    is resolvable, so Check 2 can match the same anonymous function across
+    orig/gen by source position.
+    """
     name_node = node.child_by_field_name("name")
     if name_node is not None:
         return _node_text(name_node)
@@ -254,7 +277,8 @@ def _function_name(node) -> str:
             left = parent.child_by_field_name("left")
             if left is not None:
                 return _node_text(left)
-    return "<anonymous>"
+    # Flag D: 1-indexed line number makes the identity stable and debuggable.
+    return f"<anon@{node.start_point[0] + 1}>"
 
 
 def _collect_function_complexities(root) -> dict[str, int]:
@@ -388,11 +412,72 @@ def _collect_enumeration_analysis(root) -> list:
     return result
 
 
+def _count_non_trivial_binops(root) -> int:
+    """Count binary_expression nodes where at least one operand is not a literal.
+
+    Mirrors ast_guard.analyzer.count_non_trivial_binops for Python: a binop is
+    trivial only when both operands are JS literals.  Logical operators (&&, ||,
+    ??) are excluded — they are already captured by McCabe and are control-flow,
+    not arithmetic computation signals.
+    """
+    count = 0
+    for node in _walk(root):
+        if node.type != "binary_expression":
+            continue
+        # Identify the operator (unnamed child between the two operands).
+        op = next((c.type for c in node.children if not c.is_named), None)
+        if op in _LOGICAL_OPS:
+            continue
+        named = [c for c in node.children if c.is_named]
+        if any(not _is_js_literal(c) for c in named):
+            count += 1
+    return count
+
+
+def _build_dangerous_call_events(call_list: list[str], root) -> list[DangerousCallEvent]:
+    """Build DangerousCallEvent entries for calls in the JS dangerous registry.
+
+    Scans the tree once to assign line numbers. Only the first occurrence of
+    each resolved call name is emitted — deduplication mirrors the Python path.
+    """
+    dangerous_names: set[str] = {
+        c for c in call_list
+        if c in DANGEROUS_CALLS or c.split(".")[-1] in DANGEROUS_CALLS
+    }
+    if not dangerous_names:
+        return []
+
+    events: list[DangerousCallEvent] = []
+    seen: set[str] = set()
+
+    for node in _walk(root):
+        if node.type not in ("call_expression", "new_expression"):
+            continue
+        func_field = "function" if node.type == "call_expression" else "constructor"
+        func_node = node.child_by_field_name(func_field)
+        name = _resolve_callee(func_node)
+        if name is None:
+            continue
+        bare = name.split(".")[-1]
+        if name not in dangerous_names and bare not in DANGEROUS_CALLS:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        events.append(DangerousCallEvent(
+            pattern_id=f"js_dangerous_call:{bare}",
+            call_name=name,
+            severity="CRITICAL",
+            line=node.start_point[0] + 1,
+        ))
+    return events
+
+
 def extract_metrics(code: str) -> dict:
     """
     Parse JavaScript source and return ast-guard's standard metric dictionary.
-    Includes the JS-specific ``dangerous_calls`` and ``dangerous_imports``
-    fields alongside the language-neutral keys.
+    Includes the JS-specific ``dangerous_calls``, ``dangerous_imports``, and
+    pre-built ``dangerous_call_events`` (list[DangerousCallEvent]) for the IR.
     """
     parser = _get_parser()
     src = code.encode("utf-8")
@@ -406,6 +491,7 @@ def extract_metrics(code: str) -> dict:
     call_list, import_list = _extract_calls_and_imports(root)
     function_complexities = _collect_function_complexities(root)
     enumeration_analysis = _collect_enumeration_analysis(root)
+    non_trivial_binop_count = _count_non_trivial_binops(root)
 
     dangerous_calls = sorted({
         c for c in call_list
@@ -418,6 +504,7 @@ def extract_metrics(code: str) -> dict:
         # `child_process` matches directly; `node:fs` matches via the suffix.
         if imp in DANGEROUS_IMPORTS or imp.split("/")[-1].split(":")[-1] in DANGEROUS_IMPORTS
     })
+    dangerous_call_events = _build_dangerous_call_events(call_list, root)
 
     return {
         "if_count": if_count,
@@ -436,6 +523,7 @@ def extract_metrics(code: str) -> dict:
         "enumeration_analysis": enumeration_analysis,
         "dangerous_calls": dangerous_calls,
         "dangerous_imports": dangerous_imports,
-        "non_trivial_binop_count": 0,
+        "non_trivial_binop_count": non_trivial_binop_count,
+        "dangerous_call_events": dangerous_call_events,
         "language": "javascript",
     }
