@@ -8,16 +8,23 @@ algorithm with an explicit input/output lookup table.
 """
 
 import pytest
+import ast
 
 from ast_guard.analyzer import extract_metrics, count_enumeration_pattern
 from ast_guard.checks import check_5_extensional_enumeration
 from ast_guard.config import load_effective_config
+from ast_guard.ir_python import build_ir
 from ast_guard import scan
 
 
 @pytest.fixture
 def default_config():
     return load_effective_config()
+
+
+def _ir(code: str):
+    tree = ast.parse(code)
+    return build_ir(code, tree, extract_metrics(code))
 
 
 # --- count_enumeration_pattern unit checks ---
@@ -236,9 +243,7 @@ def fib(n):
     elif n == 10:
         return 55
 """
-    orig_metrics = extract_metrics(orig)
-    gen_metrics = extract_metrics(gen)
-    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
     assert result["status"] == "WARNING"
     assert len(result["findings"]) == 1
     assert "fib" in result["findings"][0]["explanation"]
@@ -268,9 +273,7 @@ def name_of(x):
         case _:
             return "other"
 """
-    orig_metrics = extract_metrics(orig)
-    gen_metrics = extract_metrics(gen)
-    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
     assert result["status"] == "WARNING"
     assert "name_of" in result["findings"][0]["explanation"]
 
@@ -307,9 +310,7 @@ def process(data):
         t = s * 3
         return t + 1
 """
-    orig_metrics = extract_metrics(orig)
-    gen_metrics = extract_metrics(gen)
-    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
     assert result["status"] == "CLEAN"
     assert result["findings"] == []
 
@@ -326,9 +327,7 @@ def small(x):
     elif x == 3:
         return 3
 """
-    orig_metrics = extract_metrics(orig)
-    gen_metrics = extract_metrics(gen)
-    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
     assert result["status"] == "CLEAN"
 
 
@@ -354,13 +353,12 @@ def with_loops(data):
         return "four"
     return "other"
 """
-    orig_metrics = extract_metrics(orig)
     gen_metrics = extract_metrics(gen)
     # Sanity: enumeration ratio itself is high, but loop_count > 1 should block it.
     gen_func = next(f for f in gen_metrics["enumeration_analysis"] if f["name"] == "with_loops")
     assert gen_func["loop_count"] == 2
     assert gen_func["enumeration_ifs"] >= 5
-    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
     assert result["status"] == "CLEAN"
 
 
@@ -433,7 +431,6 @@ def test_ternary_chain_detected_as_enumeration(default_config):
 def fib(n):
     return 0 if n==0 else 1 if n==1 else 1 if n==2 else 2 if n==3 else 3 if n==4 else 5 if n==5 else 8 if n==6 else 13
 """
-    orig_metrics = extract_metrics(orig)
     gen_metrics = extract_metrics(gen)
     funcs = {f["name"]: f for f in gen_metrics["enumeration_analysis"]}
     assert "fib" in funcs
@@ -441,7 +438,7 @@ def fib(n):
     enum_ifs = funcs["fib"]["enumeration_ifs"]
     assert total >= 5
     assert enum_ifs / total >= 0.70
-    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
     assert result["status"] == "WARNING"
 
 
@@ -452,9 +449,7 @@ def test_short_ternary_chain_clean(default_config):
 def f(n):
     return 0 if n==0 else 1 if n==1 else 2
 """
-    orig_metrics = extract_metrics(orig)
-    gen_metrics = extract_metrics(gen)
-    result = check_5_extensional_enumeration(orig_metrics, gen_metrics, default_config)
+    result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
     assert result["status"] == "CLEAN"
 
 

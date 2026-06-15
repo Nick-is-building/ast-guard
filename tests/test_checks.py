@@ -3,10 +3,17 @@ import ast
 from ast_guard.analyzer import extract_metrics, resolve_call_name
 from ast_guard.checks import check_1_hardcoding, check_2_complexity_collapse, check_3_forbidden_calls, check_4_import_drift
 from ast_guard.config import load_effective_config
+from ast_guard.ir_python import build_ir
 
 @pytest.fixture
 def default_config():
     return load_effective_config()
+
+
+def _ir(code: str):
+    tree = ast.parse(code)
+    return build_ir(code, tree, extract_metrics(code))
+
 
 def test_check1_if_count_increase(default_config):
     orig_code = """
@@ -33,27 +40,15 @@ def process(data):
         else:
             print(0)
 """
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    
-    orig_tree = ast.parse(orig_code)
-    gen_tree = ast.parse(gen_code)
-    
-    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    res = check_1_hardcoding(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
     assert any("If-Count increased" in f["explanation"] for f in res["findings"])
 
 def test_check1_literal_count_increase(default_config):
     orig_code = "x = 1"
     gen_code = "x = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]" # 12 literals (increase of 11, >200% and >=10)
-    
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    
-    orig_tree = ast.parse(orig_code)
-    gen_tree = ast.parse(gen_code)
-    
-    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+
+    res = check_1_hardcoding(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
     assert any("Literal-Count increased" in f["explanation"] for f in res["findings"])
 
@@ -62,13 +57,7 @@ def test_check1_long_string(default_config):
     long_str = "a" * 250
     gen_code = f"x = '{long_str}'"
 
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-
-    orig_tree = ast.parse(orig_code)
-    gen_tree = ast.parse(gen_code)
-
-    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    res = check_1_hardcoding(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
     assert any("New long string constant" in f["explanation"] for f in res["findings"])
 
@@ -86,12 +75,7 @@ def test_check1_long_string_natural_text_filtered(default_config):
     assert len(prompt) > 200
     gen_code = f"x = {prompt!r}"
 
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    orig_tree = ast.parse(orig_code)
-    gen_tree = ast.parse(gen_code)
-
-    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    res = check_1_hardcoding(_ir(orig_code), _ir(gen_code), default_config)
     assert not any("New long string constant" in f["explanation"] for f in res["findings"])
 
 
@@ -102,12 +86,7 @@ def test_check1_long_string_binary_blob_filtered(default_config):
     hex_blob = "7f454c460201010000" * 20  # 360 chars
     gen_code = f"x = '{hex_blob}'"
 
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    orig_tree = ast.parse(orig_code)
-    gen_tree = ast.parse(gen_code)
-
-    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    res = check_1_hardcoding(_ir(orig_code), _ir(gen_code), default_config)
     assert not any("New long string constant" in f["explanation"] for f in res["findings"])
 
 
@@ -125,12 +104,7 @@ def test_check1_long_string_packed_lookup_still_fires(default_config):
     assert len(table) > 200
     gen_code = f"x = '{table}'"
 
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    orig_tree = ast.parse(orig_code)
-    gen_tree = ast.parse(gen_code)
-
-    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    res = check_1_hardcoding(_ir(orig_code), _ir(gen_code), default_config)
     assert any("New long string constant" in f["explanation"] for f in res["findings"])
 
 
@@ -145,12 +119,7 @@ def test_check1_long_string_numeric_sequence_filtered(default_config):
     assert len(csv_data) > 200
     gen_code = f"x = '{csv_data}'"
 
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    orig_tree = ast.parse(orig_code)
-    gen_tree = ast.parse(gen_code)
-
-    res = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, default_config)
+    res = check_1_hardcoding(_ir(orig_code), _ir(gen_code), default_config)
     assert not any("New long string constant" in f["explanation"] for f in res["findings"])
 
 
@@ -176,10 +145,7 @@ def process(x):
         return x
     return 0
 """
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    
-    res = check_2_complexity_collapse(orig_metrics, gen_metrics, default_config)
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
     # v1.3: per-function finding mentions the function's qualified name
     assert any(
@@ -198,19 +164,16 @@ import os
 os.system("ls")
 # but adding a new forbidden call like eval should trigger
 """
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
     gen_tree = ast.parse(gen_code)
-    
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CLEAN"  # No new forbidden call
-    
+
     # Now adding a new forbidden call
     gen_code_with_eval = gen_code + "\neval('1+1')"
-    gen_metrics_eval = extract_metrics(gen_code_with_eval)
     gen_tree_eval = ast.parse(gen_code_with_eval)
-    
-    res2 = check_3_forbidden_calls(orig_metrics, gen_metrics_eval, gen_tree_eval, default_config)
+
+    res2 = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code_with_eval), gen_tree_eval, default_config)
     assert res2["status"] == "CRITICAL"
     assert any("forbidden call 'eval'" in f["explanation"] for f in res2["findings"])
 
@@ -227,11 +190,9 @@ def compute(n):
     raise SystemExit(0)
     return result
 """
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
     gen_tree = ast.parse(gen_code)
 
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("forbidden call 'SystemExit'" in f["explanation"] for f in res["findings"])
 
@@ -244,11 +205,9 @@ def compute(n):
         raise SystemExit(1)
     return n * n
 """
-    orig_metrics = extract_metrics(code)
-    gen_metrics = extract_metrics(code)
     gen_tree = ast.parse(code)
 
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+    res = check_3_forbidden_calls(_ir(code), _ir(code), gen_tree, default_config)
     assert res["status"] == "CLEAN"
 
 def test_check3_obfuscation_assign(default_config):
@@ -257,11 +216,9 @@ def test_check3_obfuscation_assign(default_config):
 f = eval
 f("1+1")
 """
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
     gen_tree = ast.parse(gen_code)
-    
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("Obfuscation attempt: Forbidden name 'eval' is aliased" in f["explanation"] for f in res["findings"])
 
@@ -273,52 +230,46 @@ def test_check3_obfuscation_builtins(default_config):
     gen_code2 = "__builtins__.eval('1+1')"
     # getattr on builtins
     gen_code3 = "getattr(__builtins__, 'eval')"
-    
+
     for gcode in (gen_code1, gen_code2, gen_code3):
-        orig_metrics = extract_metrics(orig_code)
-        gen_metrics = extract_metrics(gcode)
         gen_tree = ast.parse(gcode)
-        
-        res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+        res = check_3_forbidden_calls(_ir(orig_code), _ir(gcode), gen_tree, default_config)
         assert res["status"] == "CRITICAL"
 
 def test_check3_chr_heuristic(default_config):
     orig_code = "pass"
     gen_code = "eval(chr(111)+chr(115))"
-    
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
     gen_tree = ast.parse(gen_code)
-    
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("chr() call used inside" in f["explanation"] for f in res["findings"])
 
 def test_check4_import_drift(default_config):
     orig_code = "import math"
-    
+
     # 1. Blocklisted (CRITICAL)
     gen_code_ctypes = """
 import math
 import ctypes
 """
-    res1 = check_4_import_drift(extract_metrics(orig_code), extract_metrics(gen_code_ctypes), default_config)
+    res1 = check_4_import_drift(_ir(orig_code), _ir(gen_code_ctypes), default_config)
     assert res1["status"] == "CRITICAL"
-    
+
     # 2. Allowlisted (CLEAN)
     gen_code_collections = """
 import math
 import collections
 """
-    res2 = check_4_import_drift(extract_metrics(orig_code), extract_metrics(gen_code_collections), default_config)
+    res2 = check_4_import_drift(_ir(orig_code), _ir(gen_code_collections), default_config)
     assert res2["status"] == "CLEAN"
-    
+
     # 3. Unrecognized (WARNING)
     gen_code_requests = """
 import math
 import requests
 """
-    res3 = check_4_import_drift(extract_metrics(orig_code), extract_metrics(gen_code_requests), default_config)
+    res3 = check_4_import_drift(_ir(orig_code), _ir(gen_code_requests), default_config)
     assert res3["status"] == "WARNING"
 
 
@@ -351,9 +302,7 @@ def factorial(n):
 def fact(n):
     return 1
 """
-    res = check_2_complexity_collapse(
-        extract_metrics(orig_code), extract_metrics(gen_code), default_config
-    )
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
     assert any(
         "falling back to file-level comparison" in f["explanation"]
@@ -397,9 +346,7 @@ def solve(n):
 def check_valid(n):
     return isinstance(n, int) and 0 <= n <= 1000
 """
-    res = check_2_complexity_collapse(
-        extract_metrics(orig_code), extract_metrics(gen_code), default_config
-    )
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
     assert any("validate_input" in f["explanation"] for f in res["findings"])
 
@@ -433,9 +380,7 @@ def solve(n):
         result *= i
     return result
 """
-    res = check_2_complexity_collapse(
-        extract_metrics(orig_code), extract_metrics(gen_code), default_config
-    )
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
     assert any("validate_input" in f["explanation"] for f in res["findings"])
 
@@ -472,9 +417,7 @@ def validate_v2(n):
     if n == 0: return True
     return n > 0
 """
-    res = check_2_complexity_collapse(
-        extract_metrics(orig_code), extract_metrics(gen_code), default_config
-    )
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "CLEAN"
 
 
@@ -500,9 +443,7 @@ def solver(n):
         result *= i
     return result
 """
-    res = check_2_complexity_collapse(
-        extract_metrics(orig_code), extract_metrics(gen_code), default_config
-    )
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     # tiny() had complexity 3 (below abs_min=5) → no partial-rename finding
     assert res["status"] == "CLEAN"
 
@@ -514,9 +455,7 @@ def test_check3_builtins_module_eval(default_config):
     orig_code = "import builtins\n"
     gen_code = "import builtins\nbuiltins.eval('1+1')\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
 
 
@@ -525,9 +464,7 @@ def test_check3_chained_alias(default_config):
     orig_code = "pass"
     gen_code = "g = eval\nh = g\nh('code')\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("'eval' is aliased to variable 'g'" in f["explanation"] for f in res["findings"])
     assert any("'g' is aliased to variable 'h'" in f["explanation"] for f in res["findings"])
@@ -538,9 +475,7 @@ def test_check3_three_level_chain(default_config):
     orig_code = "pass"
     gen_code = "a = eval\nb = a\nc = b\nc('code')\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("'eval' is aliased to variable 'a'" in f["explanation"] for f in res["findings"])
     assert any("'a' is aliased to variable 'b'" in f["explanation"] for f in res["findings"])
@@ -552,9 +487,7 @@ def test_check3_tuple_unpacking_alias(default_config):
     orig_code = "pass"
     gen_code = "a, b = print, eval\nb('code')\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("tuple unpacking" in f["explanation"] for f in res["findings"])
     assert any("'b'" in f["explanation"] for f in res["findings"])
@@ -565,9 +498,7 @@ def test_check3_dict_dispatch(default_config):
     orig_code = "pass"
     gen_code = 'd = {"e": eval}\nd["e"]("code")\n'
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("dict" in f["explanation"].lower() for f in res["findings"])
     assert any("'e'" in f["explanation"] for f in res["findings"])
@@ -578,9 +509,7 @@ def test_check3_mixed_tuple_chain(default_config):
     orig_code = "pass"
     gen_code = "a, b = print, eval\nc = b\nc('code')\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("tuple unpacking" in f["explanation"] for f in res["findings"])
     assert any("'b' is aliased to variable 'c'" in f["explanation"] for f in res["findings"])
@@ -591,9 +520,7 @@ def test_check3_clean_dict(default_config):
     orig_code = "pass"
     gen_code = 'd = {"safe": print, "also_safe": len}\nresult = d["safe"]("hello")\n'
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CLEAN"
 
 
@@ -604,9 +531,7 @@ def test_check3_chr_alias_inside_eval(default_config):
     orig_code = "pass"
     gen_code = "c = chr\neval(c(101)+c(118)+c(97)+c(108))\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("chr()" in f["explanation"] for f in res["findings"])
 
@@ -616,9 +541,7 @@ def test_check3_builtins_subscript_chr_inside_eval(default_config):
     orig_code = "pass"
     gen_code = "eval(__builtins__['chr'](101))\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("chr()" in f["explanation"] for f in res["findings"])
 
@@ -628,9 +551,7 @@ def test_check3_getattr_chr_alias_inside_eval(default_config):
     orig_code = "pass"
     gen_code = "c = getattr(__builtins__, 'chr')\neval(c(101))\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("chr()" in f["explanation"] for f in res["findings"])
 
@@ -640,9 +561,7 @@ def test_check3_chr_alias_outside_eval_is_clean(default_config):
     orig_code = "pass"
     gen_code = "c = chr\nx = c(65)\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CLEAN"
 
 
@@ -661,9 +580,7 @@ def test_check3_no_false_positive_method_named_eval(default_config):
     orig_code = "pass"
     gen_code = "get_parser().eval('2+2')\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CLEAN"
 
 
@@ -673,9 +590,7 @@ def test_check3_alias_chain_one_finding_per_target(default_config):
     orig_code = "pass"
     gen_code = "a = eval\nb = a\nc = b\nc('payload')\n"
     gen_tree = ast.parse(gen_code)
-    res = check_3_forbidden_calls(
-        extract_metrics(orig_code), extract_metrics(gen_code), gen_tree, default_config
-    )
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     # Extract only the variable name that appears after "aliased to variable"
     alias_targets = []

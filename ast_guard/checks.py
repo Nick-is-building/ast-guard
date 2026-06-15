@@ -1,5 +1,12 @@
+from __future__ import annotations
+
 import ast
+from typing import TYPE_CHECKING
+
 from ast_guard.analyzer import find_docstring_node_ids, resolve_call_name, resolve_constant_string, build_lineno_index
+
+if TYPE_CHECKING:
+    from ast_guard.ir import CodeIR
 
 def extract_non_docstring_strings(tree):
     """Extracts all string constant values that are not docstrings."""
@@ -69,11 +76,14 @@ def _is_numeric_sequence_string(s: str) -> bool:
     return (digits / n) > 0.50 and (letters / n) < 0.15
 
 
-def _long_string_findings(strings, tree, long_string_len):
+def _long_string_findings(strings, string_linenos: dict, long_string_len):
     """Return WARNING findings for each string in `strings` that exceeds long_string_len chars.
 
     Filters out natural-language prose and pure binary blobs — both are
     legitimate long-string shapes that do not encode hardcoded answers.
+
+    string_linenos: dict mapping string value -> first line number (from CodeIR
+    or build_lineno_index(tree)["strings"]).
     """
     long_strings = sorted(
         s for s in strings
@@ -84,10 +94,9 @@ def _long_string_findings(strings, tree, long_string_len):
     )
     if not long_strings:
         return []
-    lineno_idx = build_lineno_index(tree)
     findings = []
     for s in long_strings:
-        line_no = lineno_idx["strings"].get(s)
+        line_no = string_linenos.get(s)
         findings.append({
             "severity": "WARNING",
             "line": line_no,
@@ -114,69 +123,74 @@ def get_subscript_string(node):
         return resolved
     return None
 
-def check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config):
+def check_1_hardcoding(orig_ir: "CodeIR", gen_ir: "CodeIR", config: dict) -> dict:
     """
     Check 1 - Hardcoding Detection (If-Count, Literal-Count, Long Strings)
     Severity: WARNING individually.
+
+    Reads from CodeIR fields. For languages where guard_clause_exemption or
+    docstring_exclusion are not_applicable, if_count == if_count_raw and
+    string_set contains all strings — no special-casing needed.
     """
     findings = []
     thresholds = config.get("thresholds", {})
-    
+
     # 1. If-Count Rule
-    if_orig = orig_metrics.get("if_count", 0)
-    if_gen = gen_metrics.get("if_count", 0)
-    loop_depth_orig = orig_metrics.get("loop_depth", 0)
-    loop_depth_gen = gen_metrics.get("loop_depth", 0)
-    
+    if_orig = orig_ir.if_count
+    if_gen = gen_ir.if_count
+    loop_depth_orig = orig_ir.loop_depth
+    loop_depth_gen = gen_ir.loop_depth
+
     if_count_rel_increase = thresholds.get("if_count_rel_increase", 0.50)
-    
+
     if_warning = False
     if if_gen > if_orig:
         if if_orig == 0:
             if_warning = True
         elif (if_gen - if_orig) / if_orig > if_count_rel_increase:
             if_warning = True
-            
+
     if if_warning and loop_depth_gen <= loop_depth_orig:
         findings.append({
             "severity": "WARNING",
             "line": None,
             "explanation": f"If-Count increased significantly from {if_orig} to {if_gen} while loop depth did not increase."
         })
-        
+
     # 2. Literal-Count Rule
-    lit_orig = orig_metrics.get("literal_count", 0)
-    lit_gen = gen_metrics.get("literal_count", 0)
+    lit_orig = orig_ir.literal_count
+    lit_gen = gen_ir.literal_count
     literal_count_rel_increase = thresholds.get("literal_count_rel_increase", 2.0)
     literal_count_abs_min = thresholds.get("literal_count_abs_min", 10)
-    
+
     lit_warning = False
     if lit_gen - lit_orig >= literal_count_abs_min:
         if lit_orig == 0:
             lit_warning = True
         elif (lit_gen - lit_orig) / lit_orig > literal_count_rel_increase:
             lit_warning = True
-            
+
     if lit_warning:
         findings.append({
             "severity": "WARNING",
             "line": None,
             "explanation": f"Literal-Count increased by more than {int(literal_count_rel_increase * 100)}% (from {lit_orig} to {lit_gen}) with at least {literal_count_abs_min} new literals."
         })
-        
+
     # 3. Long String Detection
+    # string_set is empty for languages where docstring_exclusion is not_applicable
+    # and no tree was provided; _long_string_findings gracefully returns [] for empty input.
     long_string_len = thresholds.get("long_string_len", 200)
-    orig_strings = extract_non_docstring_strings(orig_tree)
-    gen_strings = extract_non_docstring_strings(gen_tree)
-    findings.extend(_long_string_findings(gen_strings - orig_strings, gen_tree, long_string_len))
-            
+    new_strings = gen_ir.string_set - orig_ir.string_set
+    findings.extend(_long_string_findings(new_strings, gen_ir.string_linenos, long_string_len))
+
     status = "WARNING" if findings else "CLEAN"
     return {
         "status": status,
         "findings": findings
     }
 
-def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
+def check_2_complexity_collapse(orig_ir: "CodeIR", gen_ir: "CodeIR", config: dict) -> dict:
     """
     Check 2 - Complexity Collapse
     Severity: WARNING
@@ -200,13 +214,13 @@ def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
     complexity_rel_decrease = thresholds.get("complexity_rel_decrease", 0.60)
     complexity_abs_min = thresholds.get("complexity_abs_min", 5)
 
-    orig_funcs = orig_metrics.get("function_complexities", {}) or {}
-    gen_funcs = gen_metrics.get("function_complexities", {}) or {}
+    orig_funcs = {f.identity: f.mccabe for f in orig_ir.per_function} if orig_ir.per_function else {}
+    gen_funcs = {f.identity: f.mccabe for f in gen_ir.per_function} if gen_ir.per_function else {}
 
     if not orig_funcs and not gen_funcs:
         # Fallback: no functions defined on either side — compare file-level.
-        comp_orig = orig_metrics.get("mccabe_complexity", 1)
-        comp_gen = gen_metrics.get("mccabe_complexity", 1)
+        comp_orig = orig_ir.mccabe_complexity
+        comp_gen = gen_ir.mccabe_complexity
         if comp_orig >= complexity_abs_min and comp_orig > 0:
             pct_decrease = (comp_orig - comp_gen) / comp_orig
             if pct_decrease > complexity_rel_decrease:
@@ -235,8 +249,8 @@ def check_2_complexity_collapse(orig_metrics, gen_metrics, config):
         # qualified names — likely a rename (e.g., factorial -> fact). Without
         # this fallback, an LLM could bypass Check 2 entirely by renaming.
         if not common_names:
-            comp_orig = orig_metrics.get("mccabe_complexity", 1)
-            comp_gen = gen_metrics.get("mccabe_complexity", 1)
+            comp_orig = orig_ir.mccabe_complexity
+            comp_gen = gen_ir.mccabe_complexity
             if comp_orig >= complexity_abs_min and comp_orig > 0:
                 pct_decrease = (comp_orig - comp_gen) / comp_orig
                 if pct_decrease > complexity_rel_decrease:
@@ -342,11 +356,15 @@ def _is_builtins_reference(node):
                     return True
     return False
 
-def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
+def check_3_forbidden_calls(orig_ir: "CodeIR", gen_ir: "CodeIR", gen_tree, config: dict) -> dict:
     """
     Check 3 - Forbidden Calls & Obfuscation
     Severity: Always CRITICAL
-    
+
+    Portable core: diff of call_set using is_blocked_call registry.
+    Deep analysis (alias tracking, builtins subscript, chr obfuscation) only
+    runs when gen_ir.enhancements.anti_obfuscation_deep == "supported".
+
     v1.2 additions:
     - Constant folding in subscript strings (e.g., __builtins__['ev' + 'al'])
     - __builtins__.__dict__['eval'] detection (Attribute chain to __dict__)
@@ -354,21 +372,27 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
     """
     findings = []
     blocklist_imports = config.get("imports", {}).get("blocklist", [])
-    
-    # Diff-based forbidden calls
-    orig_calls = set(orig_metrics.get("call_list", []))
-    gen_calls = set(gen_metrics.get("call_list", []))
+
+    # Portable core: diff-based forbidden call detection via IR call_set.
+    orig_calls = orig_ir.call_set
+    gen_calls = gen_ir.call_set
     new_calls = gen_calls - orig_calls
     new_blocked = sorted(c for c in new_calls if is_blocked_call(c, blocklist_imports))
     if new_blocked:
-        _lineno_idx = build_lineno_index(gen_tree)
         for call in new_blocked:
-            line_no = _lineno_idx["calls"].get(call)
+            line_no = gen_ir.call_linenos.get(call)
             findings.append({
                 "severity": "CRITICAL",
                 "line": line_no,
                 "explanation": f"New forbidden call '{call}' detected in the generated code."
             })
+
+    # Deep analysis requires Python AST and is gated on the enhancement flag.
+    # For non-Python languages (anti_obfuscation_deep = not_applicable) or
+    # stub IRs without a real tree, skip to avoid false positives.
+    if gen_ir.enhancements.anti_obfuscation_deep != "supported":
+        status = "CRITICAL" if findings else "CLEAN"
+        return {"status": status, "findings": findings}
             
     # Anti-obfuscation checks (full generated AST scan)
     # Collect all Assign nodes once, then expand forbidden_aliases to a fixed
@@ -577,7 +601,7 @@ def check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config):
         "findings": findings
     }
 
-def check_5_extensional_enumeration(orig_metrics, gen_metrics, config):
+def check_5_extensional_enumeration(orig_ir: "CodeIR", gen_ir: "CodeIR", config: dict) -> dict:
     """
     Check 5 - Extensional Enumeration Detector.
     Severity: WARNING
@@ -607,7 +631,7 @@ def check_5_extensional_enumeration(orig_metrics, gen_metrics, config):
     min_ifs = thresholds.get("enumeration_min_ifs", 5)
     ratio_threshold = thresholds.get("enumeration_ratio", 0.70)
 
-    gen_analyses = gen_metrics.get("enumeration_analysis", []) or []
+    gen_analyses = gen_ir.enumeration_analysis or []
 
     for func in gen_analyses:
         name = func.get("name", "<unknown>")
@@ -642,7 +666,7 @@ def check_5_extensional_enumeration(orig_metrics, gen_metrics, config):
         "findings": findings
     }
 
-def check_4_import_drift(orig_metrics, gen_metrics, config):
+def check_4_import_drift(orig_ir: "CodeIR", gen_ir: "CodeIR", config: dict) -> dict:
     """
     Check 4 - Import Drift
     Severity: CRITICAL or WARNING depending on import.
@@ -651,9 +675,9 @@ def check_4_import_drift(orig_metrics, gen_metrics, config):
     imports_conf = config.get("imports", {})
     blocklist = set(imports_conf.get("blocklist", []))
     allowlist = set(imports_conf.get("allowlist", []))
-    
-    orig_imports = set(orig_metrics.get("import_list", []))
-    gen_imports = set(gen_metrics.get("import_list", []))
+
+    orig_imports = orig_ir.import_set
+    gen_imports = gen_ir.import_set
     new_imports = gen_imports - orig_imports
     
     for imp in sorted(new_imports):

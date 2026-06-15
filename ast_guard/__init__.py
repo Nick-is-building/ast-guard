@@ -2,6 +2,7 @@ __version__ = "2.2.1"
 __all__ = ["scan", "scan_multilang", "scan_standalone", "feedback"]
 
 import ast
+import dataclasses
 from ast_guard.analyzer import extract_metrics
 from ast_guard.allowlist import detect_allowlist_transformations
 from ast_guard.checks import (
@@ -10,7 +11,6 @@ from ast_guard.checks import (
     check_3_forbidden_calls,
     check_4_import_drift,
     check_5_extensional_enumeration,
-    extract_non_docstring_strings,
     _long_string_findings,
     is_blocked_call,
 )
@@ -20,6 +20,7 @@ from ast_guard.check_behavioral import risk_score_standalone, is_safe_subprocess
 from ast_guard.check_literal_hijack import check_7_literal_hijack
 from ast_guard.check_new_constant_bypass import check_8_new_constant_bypass
 from ast_guard.confidence import calculate_confidence
+from ast_guard.ir_python import build_ir, metrics_to_stub_ir, empty_ir
 
 
 def _count_param_specific_const_ifs(tree: ast.AST) -> int:
@@ -138,13 +139,17 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
         
     # 3. Detect Allowlist Transformations (v1.2: now receives config for set-literal-size check)
     transformations = detect_allowlist_transformations(original_code, generated_code, orig_metrics, gen_metrics, config)
-    
-    # 4. Run Checks
-    check_1 = check_1_hardcoding(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
-    check_2 = check_2_complexity_collapse(orig_metrics, gen_metrics, config)
-    check_3 = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, config)
-    check_4 = check_4_import_drift(orig_metrics, gen_metrics, config)
-    check_5 = check_5_extensional_enumeration(orig_metrics, gen_metrics, config)
+
+    # 4. Build IR objects for orig and gen (Python adapter: full enhancements)
+    orig_ir = build_ir(original_code, orig_tree, orig_metrics)
+    gen_ir = build_ir(generated_code, gen_tree, gen_metrics)
+
+    # 5. Run Checks (Checks 1-5 via IR; Checks 7-8 still via metrics + AST)
+    check_1 = check_1_hardcoding(orig_ir, gen_ir, config)
+    check_2 = check_2_complexity_collapse(orig_ir, gen_ir, config)
+    check_3 = check_3_forbidden_calls(orig_ir, gen_ir, gen_tree, config)
+    check_4 = check_4_import_drift(orig_ir, gen_ir, config)
+    check_5 = check_5_extensional_enumeration(orig_ir, gen_ir, config)
     check_7 = check_7_literal_hijack(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
     check_8 = check_8_new_constant_bypass(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
 
@@ -177,9 +182,9 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
     #     special cases with an algorithmic fallback would otherwise pass condition
     #     (a) while still gaming the test suite on the hardcoded inputs.
     if check_1["status"] == "WARNING" and check_5["status"] == "CLEAN":
-        _gen_mccabe = gen_metrics.get("mccabe_complexity", 1)
-        _orig_mccabe = orig_metrics.get("mccabe_complexity", 1)
-        _gen_binops = gen_metrics.get("non_trivial_binop_count", 0)
+        _gen_mccabe = gen_ir.mccabe_complexity
+        _orig_mccabe = orig_ir.mccabe_complexity
+        _gen_binops = gen_ir.non_trivial_binop_count
         if _gen_mccabe > _orig_mccabe and _gen_binops > 4:
             _new_psi = max(
                 0,
@@ -377,15 +382,17 @@ def scan_multilang(
     except SyntaxError as e:
         return _error_result(f"Syntax Error: Generated code failed to parse: {e}")
 
-    # Empty Python AST placeholder — Check 1 long-string sub-rule and
-    # Check 3 alias-obfuscation sub-rule are Python-AST-only and won't fire.
-    empty_tree = ast.parse("")
+    # Build stub IRs from metrics dicts (no Python AST available for multilang).
+    # string_set and call_linenos are empty; anti_obfuscation_deep is not_applicable
+    # so Check 3 deep analysis is skipped automatically.
+    orig_ir = metrics_to_stub_ir(orig_metrics, language)
+    gen_ir = metrics_to_stub_ir(gen_metrics, language)
 
-    check_1 = check_1_hardcoding(orig_metrics, gen_metrics, empty_tree, empty_tree, config)
-    check_2 = check_2_complexity_collapse(orig_metrics, gen_metrics, config)
-    check_3 = check_3_forbidden_calls(orig_metrics, gen_metrics, empty_tree, config)
-    check_4 = check_4_import_drift(orig_metrics, gen_metrics, config)
-    check_5 = check_5_extensional_enumeration(orig_metrics, gen_metrics, config)
+    check_1 = check_1_hardcoding(orig_ir, gen_ir, config)
+    check_2 = check_2_complexity_collapse(orig_ir, gen_ir, config)
+    check_3 = check_3_forbidden_calls(orig_ir, gen_ir, ast.parse(""), config)
+    check_4 = check_4_import_drift(orig_ir, gen_ir, config)
+    check_5 = check_5_extensional_enumeration(orig_ir, gen_ir, config)
 
     # Supplement Check 3 with language-specific dangerous calls that are
     # new in generated code (the standard blocklist covers eval/exec; the
@@ -606,6 +613,15 @@ def scan_standalone(
                     or all(is_safe_subprocess(c, _sp_from_frozen) for c in _sp_calls)
                 )
 
+    # Build IR objects for standalone mode.
+    # orig_ir is always empty (no baseline). gen_ir is full Python IR when
+    # language=="python" (tree available), stub otherwise.
+    orig_ir = empty_ir(language)
+    if language == "python":
+        gen_ir = build_ir(code, gen_tree, gen_metrics)
+    else:
+        gen_ir = metrics_to_stub_ir(gen_metrics, language)
+
     # Check 1 (standalone): long strings + absolute literal count only.
     # The relative if-count rule is skipped — it requires a baseline to be
     # meaningful, and would fire for any code with a single if-statement.
@@ -615,7 +631,7 @@ def scan_standalone(
 
     if language == "python":
         check_1_findings.extend(
-            _long_string_findings(extract_non_docstring_strings(gen_tree), gen_tree, long_string_len)
+            _long_string_findings(gen_ir.string_set, gen_ir.string_linenos, long_string_len)
         )
 
     # Optional repo-context baseline. Computed once here so risk_score_standalone
@@ -645,7 +661,7 @@ def scan_standalone(
     else:
         _c6_result_raw = {"score": 0, "severity": "CLEAN", "findings": []}
 
-    lit_gen = gen_metrics.get("literal_count", 0)
+    lit_gen = gen_ir.literal_count
     _lit_threshold = 50 if _c6_result_raw["score"] >= 30 else 80
     if lit_gen > _lit_threshold:
         _lit_msg = (
@@ -667,11 +683,8 @@ def scan_standalone(
     # Everything contextual (open write, os.environ, sys.exit, …) is handled
     # by Check 6 which has the context needed to score those accurately.
     _sa_c3_calls = frozenset({"eval", "exec", "compile", "__import__"})
-    _sa_gen_metrics_c3 = dict(gen_metrics)
-    _sa_gen_metrics_c3["call_list"] = [
-        c for c in gen_metrics.get("call_list", []) if c in _sa_c3_calls
-    ]
-    check_3 = check_3_forbidden_calls(orig_metrics, _sa_gen_metrics_c3, gen_tree, cfg)
+    _sa_gen_ir_c3 = dataclasses.replace(gen_ir, call_set=gen_ir.call_set & _sa_c3_calls)
+    check_3 = check_3_forbidden_calls(orig_ir, _sa_gen_ir_c3, gen_tree, cfg)
 
     # Check 4: only flag imports that are suspicious without a diff baseline.
     # os and sys are ubiquitous in agent code on a Linux VM; including them
@@ -680,25 +693,30 @@ def scan_standalone(
         "subprocess", "ctypes", "signal", "multiprocessing", "threading",
         "pickle", "marshal", "code", "codeop", "importlib",
     })
-    _sa_c4_metrics = dict(gen_metrics)
-    _sa_c4_metrics["import_list"] = [
-        imp for imp in gen_metrics.get("import_list", [])
-        if imp.split(".")[0] in _sa_c4_dangerous
-    ]
+    _sa_gen_ir_c4 = dataclasses.replace(
+        gen_ir,
+        import_set={
+            imp for imp in gen_ir.import_set
+            if imp.split(".")[0] in _sa_c4_dangerous
+        },
+    )
     # When every subprocess call is structurally safe, remove it from Check 4
     # input so Check 4 stays CLEAN.  No WARNING is emitted — the sample is
     # silently clean if no other check fires.
     if _subprocess_import_safe:
-        _sa_c4_metrics["import_list"] = [
-            imp for imp in _sa_c4_metrics["import_list"]
-            if imp.split(".")[0] != "subprocess"
-        ]
-    check_4 = check_4_import_drift(orig_metrics, _sa_c4_metrics, cfg)
+        _sa_gen_ir_c4 = dataclasses.replace(
+            _sa_gen_ir_c4,
+            import_set={
+                imp for imp in _sa_gen_ir_c4.import_set
+                if imp.split(".")[0] != "subprocess"
+            },
+        )
+    check_4 = check_4_import_drift(orig_ir, _sa_gen_ir_c4, cfg)
     # Suppress any residual WARNING findings (unknown imports in the filtered set).
     check_4["findings"] = [f for f in check_4["findings"] if f["severity"] == "CRITICAL"]
     check_4["status"] = "CRITICAL" if check_4["findings"] else "CLEAN"
 
-    check_5 = check_5_extensional_enumeration(orig_metrics, gen_metrics, cfg)
+    check_5 = check_5_extensional_enumeration(orig_ir, gen_ir, cfg)
 
     # Check 6: behavioral risk scoring — the primary contextual detector.
     # (risk_score_standalone already called above to inform the literal threshold)

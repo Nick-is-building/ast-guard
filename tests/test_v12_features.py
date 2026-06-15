@@ -8,11 +8,17 @@ from ast_guard.checks import check_2_complexity_collapse, check_3_forbidden_call
 from ast_guard.allowlist import detect_allowlist_transformations
 from ast_guard.output import format_sarif_report
 from ast_guard.config import load_effective_config
+from ast_guard.ir_python import build_ir
 from ast_guard import scan, scan_standalone
 
 @pytest.fixture
 def default_config():
     return load_effective_config()
+
+
+def _ir(code: str):
+    tree = ast.parse(code)
+    return build_ir(code, tree, extract_metrics(code))
 
 
 # --- Constant Folding Tests ---
@@ -42,12 +48,9 @@ def test_check3_constant_folding_subscript(default_config):
     """Check 3 catches __builtins__['ev' + 'al'] via constant folding."""
     orig_code = "pass"
     gen_code = "__builtins__['ev' + 'al']('1+1')"
-    
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
     gen_tree = ast.parse(gen_code)
-    
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("resolved to 'eval'" in f["explanation"] for f in res["findings"])
 
@@ -58,24 +61,18 @@ def test_check3_builtins_dict_access(default_config):
     """Check 3 catches __builtins__.__dict__['eval']."""
     orig_code = "pass"
     gen_code = "__builtins__.__dict__['eval']('1+1')"
-    
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
     gen_tree = ast.parse(gen_code)
-    
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
 
 def test_check3_getattr_globals_builtins(default_config):
     """Check 3 catches getattr(globals()['__builtins__'], 'eval')."""
     orig_code = "pass"
     gen_code = "getattr(globals()['__builtins__'], 'eval')('1+1')"
-    
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
     gen_tree = ast.parse(gen_code)
-    
-    res = check_3_forbidden_calls(orig_metrics, gen_metrics, gen_tree, default_config)
+
+    res = check_3_forbidden_calls(_ir(orig_code), _ir(gen_code), gen_tree, default_config)
     assert res["status"] == "CRITICAL"
     assert any("getattr() call targeting built-ins" in f["explanation"] for f in res["findings"])
 
@@ -96,10 +93,7 @@ def small(x):
 def small(x):
     return max(x, 0)
 """
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    
-    res = check_2_complexity_collapse(orig_metrics, gen_metrics, default_config)
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "CLEAN"
 
 def test_check2_complexity_floor_allows_large_functions(default_config):
@@ -124,10 +118,7 @@ def process(x):
         return x
     return 0
 """
-    orig_metrics = extract_metrics(orig_code)
-    gen_metrics = extract_metrics(gen_code)
-    
-    res = check_2_complexity_collapse(orig_metrics, gen_metrics, default_config)
+    res = check_2_complexity_collapse(_ir(orig_code), _ir(gen_code), default_config)
     assert res["status"] == "WARNING"
 
 
