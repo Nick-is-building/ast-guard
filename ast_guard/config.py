@@ -16,7 +16,7 @@ DEFAULT_CONFIG = {
         "enumeration_ratio": 0.70,     # v1.3: Min share of constant-equality branches for Check 5
         "enumeration_min_ifs": 5,      # v1.3: Min total branches for Check 5 to fire
         "dispatch_min_size": 5,        # Check 5 dict-dispatch: pair-mode min table entries
-        "dispatch_standalone_min_size": 8,  # Check 5 dict-dispatch: standalone min table entries
+        "dispatch_standalone_min_size": 5,  # Check 5 dict-dispatch: standalone min (data-calibrated: 0 FPs found at 5 in MBPP/SORH)
     },
     "imports": {
         "blocklist": [

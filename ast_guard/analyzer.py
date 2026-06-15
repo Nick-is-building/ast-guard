@@ -279,14 +279,53 @@ def count_non_trivial_binops(tree):
     return count
 
 
+def _is_const_expr(node) -> bool:
+    """True when ``node`` is a compile-time-constant expression.
+
+    Change 1 (structured constants): accepts scalar literals AND homogeneous
+    constant collections so tables like ``{n: [a, b, c]}`` or ``{n: (x, y)}``
+    are recognised as all-constant.
+
+    Accepted:
+      ast.Constant                          -- scalar literals, strings, bytes
+      ast.List / ast.Tuple / ast.Set        -- constant collections (recursive)
+      ast.Dict                              -- constant dicts (recursive, no **)
+      ast.UnaryOp(USub|UAdd|Invert|Not)     -- compile-time negation (e.g. -1)
+
+    Rejected:
+      ast.Name, ast.Call, ast.Lambda        -- runtime-evaluated
+      ast.BinOp with non-constant operands  -- arithmetic on variables
+      ast.JoinedStr (f-string)              -- runtime-interpolated
+      ast.Comprehension / ListComp etc.     -- generator expressions
+    """
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_is_const_expr(e) for e in node.elts)
+    if isinstance(node, ast.Dict):
+        for k, v in zip(node.keys, node.values):
+            if k is None:  # **unpacking
+                return False
+            if not _is_const_expr(k) or not _is_const_expr(v):
+                return False
+        return True
+    if isinstance(node, ast.UnaryOp) and isinstance(
+        node.op, (ast.USub, ast.UAdd, ast.Invert, ast.Not)
+    ):
+        return _is_const_expr(node.operand)
+    return False
+
+
 def _all_literal_dict(dict_node: ast.Dict) -> bool:
-    """True when every key and value in dict_node is an ast.Constant (no **unpacking)."""
+    """True when every key and value in dict_node is a constant expression (no **unpacking).
+
+    Uses _is_const_expr so structured constant values (lists, tuples, nested dicts)
+    are accepted in addition to scalar literals.
+    """
     for k, v in zip(dict_node.keys, dict_node.values):
         if k is None:  # **unpacking placeholder
             return False
-        if not isinstance(k, ast.Constant):
-            return False
-        if not isinstance(v, ast.Constant):
+        if not _is_const_expr(k) or not _is_const_expr(v):
             return False
     return True
 
@@ -304,9 +343,36 @@ def _func_param_names(func_node) -> frozenset:
     return frozenset(names)
 
 
+# Trivial scalar coercions accepted as param-keyed lookups (Change 2).
+_COERCE_CALLS = frozenset({"int", "str", "float", "bool"})
+
+
 def _is_param_key(key_node, params: frozenset) -> bool:
-    """True when key_node is directly a function parameter name (not a derived expression)."""
-    return isinstance(key_node, ast.Name) and key_node.id in params
+    """True when key_node is or trivially derives from a single function parameter.
+
+    Change 2 (trivial coercions): int(param), str(param), float(param), and
+    bool(param) are structurally equivalent to a direct param reference when
+    the sole argument is a param name and there are no keyword arguments.
+
+    Residual surface (documented, not detected):
+      n % const    -- arithmetic modulo; changes the key domain, not a coercion.
+      n + const    -- domain shift; a future dataflow pass could handle it.
+      n // const   -- integer division; same status as n % const.
+      transform(n) -- non-scalar-coercion calls; semantics are unknown.
+    """
+    if isinstance(key_node, ast.Name) and key_node.id in params:
+        return True
+    if (
+        isinstance(key_node, ast.Call)
+        and isinstance(key_node.func, ast.Name)
+        and key_node.func.id in _COERCE_CALLS
+        and len(key_node.args) == 1
+        and not key_node.keywords
+        and isinstance(key_node.args[0], ast.Name)
+        and key_node.args[0].id in params
+    ):
+        return True
+    return False
 
 
 def _check_dispatch_return(ret, params, local_dicts, module_dicts):
@@ -395,9 +461,10 @@ def analyze_dispatch_tables(tree) -> list:
     a constant dict (all keys and values are ast.Constant) and param is a
     function parameter.  The field records the number of entries in that dict.
 
-    dispatch_all_literal is True only when ALL keys and values are ast.Constant.
-    A table with computed values (e.g. values that are expressions) sets this
-    False so runtime caches are not flagged.
+    dispatch_all_literal is True when ALL keys and values are constant expressions
+    (_is_const_expr): scalar literals, homogeneous constant collections (list/tuple/
+    set/dict), and unary-negated constants. Runtime-computed values (calls, names,
+    lambdas, f-strings) set it False so caches are not flagged.
 
     Module-level dict assignments are collected as a fallback for the common
     pattern ``_ANSWERS = {1: 42, ...}`` followed by ``return _ANSWERS[n]``.

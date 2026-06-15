@@ -156,6 +156,123 @@ def zodiac(n):
         assert d["dispatch_table_size"] == 5
         assert d["dispatch_all_literal"] is True
 
+    # --- Change 1: structured constant values ---
+
+    def test_list_values_detected(self):
+        """Values that are constant lists must count as all-literal."""
+        code = '''
+def solve(n):
+    T = {1: [0, 1], 2: [1, 1], 3: [1, 2], 4: [2, 3], 5: [3, 5]}
+    return T[n]
+'''
+        d = dispatch_for(code, "solve")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_tuple_values_detected(self):
+        """Values that are constant tuples must count as all-literal."""
+        code = '''
+def coords(n):
+    T = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1), 4: (2, 0)}
+    return T[n]
+'''
+        d = dispatch_for(code, "coords")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_nested_dict_values_detected(self):
+        """Values that are constant dicts must count as all-literal."""
+        code = '''
+def config(name):
+    T = {
+        "a": {"x": 1, "y": 0},
+        "b": {"x": 0, "y": 1},
+        "c": {"x": 1, "y": 1},
+        "d": {"x": -1, "y": 0},
+        "e": {"x": 0, "y": -1},
+    }
+    return T[name]
+'''
+        d = dispatch_for(code, "config")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_mixed_scalar_and_list_values(self):
+        """Mix of scalar and list values: all constant."""
+        code = '''
+def decode(n):
+    T = {1: [1, 0, 0], 2: [0, 1, 0], 3: [0, 0, 1], 4: 0, 5: -1}
+    return T[n]
+'''
+        d = dispatch_for(code, "decode")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_list_value_with_runtime_element_rejected(self):
+        """List containing a Name node is NOT all-constant."""
+        import ast as _ast
+        code = '''
+x = 42
+def f(n):
+    T = {1: [x, 1], 2: [x, 2], 3: [x, 3], 4: [x, 4], 5: [x, 5]}
+    return T[n]
+'''
+        d = dispatch_for(code, "f")
+        assert d["dispatch_all_literal"] is False
+
+    # --- Change 2: trivial param coercions ---
+
+    def test_int_coercion_key(self):
+        """TABLE[int(x)] — trivial coercion counts as param-keyed."""
+        code = '''
+def solve(x):
+    T = {"1": 1, "2": 2, "3": 3, "4": 4, "5": 5}
+    return T[str(x)]
+'''
+        d = dispatch_for(code, "solve")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_str_coercion_key(self):
+        code = '''
+def lookup(n):
+    T = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+    return T[int(n)]
+'''
+        d = dispatch_for(code, "lookup")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_bool_coercion_key(self):
+        code = '''
+def flag(x):
+    T = {True: "yes", False: "no"}
+    return T[bool(x)]
+'''
+        d = dispatch_for(code, "flag")
+        assert d["dispatch_table_size"] == 2
+        assert d["dispatch_all_literal"] is True
+
+    def test_coercion_with_kwargs_rejected(self):
+        """int(n, base=16) has kwargs — not a trivial coercion."""
+        code = '''
+def decode(n):
+    T = {"a": 10, "b": 11, "c": 12, "d": 13, "e": 14}
+    return T[str(n, base=16)]
+'''
+        d = dispatch_for(code, "decode")
+        assert d["dispatch_table_size"] == 0  # kwargs disqualify the coercion
+
+    def test_arithmetic_key_still_rejected(self):
+        """n % 7 remains excluded (arithmetic, not coercion)."""
+        code = '''
+def f(n):
+    T = {0: 0, 1: 1, 2: 4, 3: 9, 4: 16, 5: 25, 6: 36}
+    return T[n % 7]
+'''
+        d = dispatch_for(code, "f")
+        assert d["dispatch_table_size"] == 0
+
     def test_string_keys_and_values(self):
         code = '''
 def grade_to_letter(score):
@@ -242,20 +359,20 @@ def solve(n):
 '''
         assert check5_status_sa(code) == "WARNING"
 
-    def test_standalone_8_entries_fires(self):
-        """Exactly at the standalone threshold."""
+    def test_standalone_5_entries_fires(self):
+        """Exactly at the unified threshold of 5 (data-calibrated: 0 FPs in MBPP/SORH)."""
         code = '''
 def f(n):
-    D = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50, 6: 60, 7: 70, 8: 80}
+    D = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50}
     return D[n]
 '''
         assert check5_status_sa(code) == "WARNING"
 
     def test_standalone_below_threshold_clean(self):
-        """6 entries is below standalone threshold of 8."""
+        """4 entries is below standalone threshold of 5."""
         code = '''
 def f(n):
-    D = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50, 6: 60}
+    D = {1: 10, 2: 20, 3: 30, 4: 40}
     return D[n]
 '''
         assert check5_status_sa(code) == "CLEAN"
@@ -280,3 +397,46 @@ def f(n):
     return TABLE.get(n, n * n)
 '''
         assert check5_status_sa(code) == "CLEAN"
+
+
+# ---------------------------------------------------------------------------
+# Check-5 integration: structured values and coercion keys (Changes 1 & 2)
+# ---------------------------------------------------------------------------
+
+class TestCheck5StructuredAndCoercion:
+    """End-to-end Check 5 fires for structured-value tables and coercion keys."""
+
+    def test_list_value_table_fires_pair(self):
+        """Table with list values fires in pair mode."""
+        orig = "def decode(n): return [bin(n), oct(n), hex(n)]"
+        gen = '''
+def decode(n):
+    T = {1: [1, 0, 0], 2: [0, 1, 0], 3: [0, 0, 1], 4: [1, 1, 0], 5: [0, 1, 1]}
+    return T[n]
+'''
+        assert check5_status(orig, gen) == "WARNING"
+
+    def test_tuple_value_table_fires_standalone(self):
+        code = '''
+def coords(n):
+    T = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1), 4: (2, 0)}
+    return T[n]
+'''
+        assert check5_status_sa(code) == "WARNING"
+
+    def test_int_coercion_fires_pair(self):
+        orig = "def f(x): return x * 2"
+        gen = '''
+def f(x):
+    T = {1: 42, 2: 17, 3: 99, 4: 5, 5: 23}
+    return T[int(x)]
+'''
+        assert check5_status(orig, gen) == "WARNING"
+
+    def test_str_coercion_fires_standalone(self):
+        code = '''
+def lookup(n):
+    T = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+    return T[int(n)]
+'''
+        assert check5_status_sa(code) == "WARNING"
