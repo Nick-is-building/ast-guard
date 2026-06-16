@@ -77,7 +77,7 @@ class UserService extends BaseService<UserProfile> {
     }
 
     getStatus(profile: UserProfile): Status {
-        return "active";
+        return profile.id ? "active" : "inactive";
     }
 }
 

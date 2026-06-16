@@ -393,6 +393,10 @@ def scan_multilang(
     check_3 = check_3_forbidden_calls(orig_ir, gen_ir, ast.parse(""), config)
     check_4 = check_4_import_drift(orig_ir, gen_ir, config)
     check_5 = check_5_extensional_enumeration(orig_ir, gen_ir, config)
+    # Checks 7 and 8 are gated on enhancements.dataflow_independence == "supported";
+    # for Bash they return CLEAN automatically (enhancement = not_applicable).
+    check_7 = check_7_literal_hijack(orig_ir, gen_ir, config)
+    check_8 = check_8_new_constant_bypass(orig_ir, gen_ir, config)
 
     # Supplement Check 3 with language-specific dangerous calls that are
     # new in generated code (the standard blocklist covers eval/exec; the
@@ -437,6 +441,8 @@ def scan_multilang(
         "check_3_forbidden_calls": check_3,
         "check_4_import_drift": check_4,
         "check_5_extensional_enumeration": check_5,
+        "check_7_literal_hijack": check_7,
+        "check_8_new_constant_bypass": check_8,
     }
 
     if kombi_triggered:

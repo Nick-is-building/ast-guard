@@ -47,9 +47,11 @@ _PYTHON_ENHANCEMENTS = EnhancementFlags(
 
 # Flag C: switch/case enumeration is partial (literal-valued cases only).
 # Flag dispatch_table: return TABLE[key] / TABLE.get(key) detection now supported.
+# Flag dataflow_independence: Check 7/8 IR fields now computed by the JS adapter.
 _JS_ENHANCEMENTS = EnhancementFlags(
     match_case_enumeration="partial",
     dispatch_table="supported",
+    dataflow_independence="supported",
 )
 
 # TS: same as JS + docstring_exclusion=partial (JSDoc appears as comment nodes,
@@ -58,6 +60,7 @@ _TS_ENHANCEMENTS = EnhancementFlags(
     match_case_enumeration="partial",
     dispatch_table="supported",
     docstring_exclusion="partial",
+    dataflow_independence="supported",
 )
 
 
@@ -561,9 +564,10 @@ def metrics_to_stub_ir(metrics: dict, language: str = "python") -> CodeIR:
         max_dict_literal_size=metrics.get("max_dict_literal_size", 0),
         comprehension_count=metrics.get("comprehension_count", 0),
         functional_call_count=metrics.get("functional_call_count", 0),
-        per_function=_build_per_function(metrics),
+        per_function=_build_per_function(metrics, metrics.get("dataflow_fields")),
         enumeration_analysis=metrics.get("enumeration_analysis", []) or [],
         dangerous_call_events=metrics.get("dangerous_call_events", []),
+        scalar_set=metrics.get("scalar_set", frozenset()),
         enhancements=enh,
     )
 

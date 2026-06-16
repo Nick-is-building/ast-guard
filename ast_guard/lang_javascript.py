@@ -893,6 +893,663 @@ def _count_non_trivial_binops(root) -> int:
     return count
 
 
+# ---------------------------------------------------------------------------
+# Dataflow independence helpers (Checks 7 & 8 IR fields)
+# ---------------------------------------------------------------------------
+
+# Scalar constants generic enough to appear in any algorithm; not suspicious
+# even when they are new constants absent from the original code.
+_JS_TRIVIAL_COMPARE_CONSTANTS: frozenset = frozenset({0, 1, -1, 2, None, True, False, ""})
+
+# Comparison operators that indicate a tainted-vs-literal check in a condition.
+_JS_CMP_OPS: frozenset = frozenset({"==", "===", "!=", "!==", "<", ">", "<=", ">="})
+
+
+def _js_collect_pattern_names(node, names: set) -> None:
+    """Recursively add all variable names introduced by a JS assignment pattern to names."""
+    if node is None:
+        return
+    t = node.type
+    if t == "identifier":
+        names.add(_node_text(node))
+    elif t == "assignment_pattern":
+        _js_collect_pattern_names(node.child_by_field_name("left"), names)
+    elif t in ("rest_pattern", "rest_parameter", "rest_element"):
+        for child in node.named_children:
+            if child.type == "identifier":
+                names.add(_node_text(child))
+                break
+    elif t == "array_pattern":
+        for child in node.named_children:
+            _js_collect_pattern_names(child, names)
+    elif t == "object_pattern":
+        for child in node.named_children:
+            if child.type == "shorthand_property_identifier_pattern":
+                names.add(_node_text(child))
+            elif child.type == "pair_pattern":
+                _js_collect_pattern_names(child.child_by_field_name("value"), names)
+            elif child.type in ("rest_pattern", "rest_element"):
+                for gc in child.named_children:
+                    if gc.type == "identifier":
+                        names.add(_node_text(gc))
+                        break
+    elif t in ("required_parameter", "optional_parameter"):
+        # TypeScript typed parameter: get name from 'pattern' field or first identifier-ish child.
+        pattern = node.child_by_field_name("pattern")
+        if pattern is None:
+            pattern = next(
+                (gc for gc in node.named_children
+                 if gc.type in ("identifier", "object_pattern", "array_pattern")),
+                None,
+            )
+        _js_collect_pattern_names(pattern, names)
+
+
+def _js_all_param_names(func_node) -> frozenset:
+    """Collect all parameter names including destructured ones for dataflow analysis."""
+    params_node = func_node.child_by_field_name("parameters")
+    single_param = False
+    if params_node is None:
+        params_node = func_node.child_by_field_name("parameter")
+        single_param = True
+    if params_node is None:
+        return frozenset()
+
+    names: set = set()
+    if single_param:
+        _js_collect_pattern_names(params_node, names)
+        return frozenset(names)
+
+    for child in params_node.named_children:
+        _js_collect_pattern_names(child, names)
+    return frozenset(names)
+
+
+def _js_name_refs_in(node):
+    """Yield every variable identifier name referenced anywhere under node."""
+    for n in _walk(node):
+        if n.type == "identifier":
+            yield _node_text(n)
+        elif n.type == "shorthand_property_identifier":
+            # {x} in object-expression context reads variable x.
+            yield _node_text(n)
+
+
+def _js_tainted_in(node, tainted: set) -> bool:
+    """True if any variable identifier under node is in the tainted set."""
+    for name in _js_name_refs_in(node):
+        if name in tainted:
+            return True
+    return False
+
+
+def _js_compute_tainted(func_node, params: frozenset) -> set:
+    """Fixed-point taint propagation from function parameters.
+
+    Over-approximates: any name assigned from a tainted expression becomes
+    tainted (flow-insensitive).  Destructuring assignments are handled so
+    {x, y} = taintedObj propagates taint to x and y.
+    """
+    tainted = set(params)
+    body = func_node.child_by_field_name("body")
+    if body is None or body.type != "statement_block":
+        return tainted
+
+    changed = True
+    iterations = 0
+    while changed and iterations < 50:
+        changed = False
+        iterations += 1
+        for node in _walk_skip_funcs(body, skip_root=False):
+            t = node.type
+            if t == "variable_declarator":
+                name_node = node.child_by_field_name("name")
+                value_node = node.child_by_field_name("value")
+                if name_node is not None and value_node is not None:
+                    if _js_tainted_in(value_node, tainted):
+                        prev = len(tainted)
+                        _js_collect_pattern_names(name_node, tainted)
+                        if len(tainted) > prev:
+                            changed = True
+            elif t == "assignment_expression":
+                left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
+                if left is not None and right is not None:
+                    if _js_tainted_in(right, tainted):
+                        prev = len(tainted)
+                        _js_collect_pattern_names(left, tainted)
+                        if len(tainted) > prev:
+                            changed = True
+            elif t == "augmented_assignment_expression":
+                left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
+                if left is not None and right is not None:
+                    if _js_tainted_in(right, tainted):
+                        prev = len(tainted)
+                        _js_collect_pattern_names(left, tainted)
+                        if len(tainted) > prev:
+                            changed = True
+            elif t in ("for_in_statement", "for_of_statement"):
+                left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
+                if left is not None and right is not None:
+                    if _js_tainted_in(right, tainted):
+                        prev = len(tainted)
+                        # left may be lexical_declaration (let x) or a bare pattern.
+                        if left.type in ("lexical_declaration", "variable_declaration"):
+                            for child in left.named_children:
+                                if child.type == "variable_declarator":
+                                    _js_collect_pattern_names(
+                                        child.child_by_field_name("name"), tainted
+                                    )
+                        else:
+                            _js_collect_pattern_names(left, tainted)
+                        if len(tainted) > prev:
+                            changed = True
+
+    return tainted
+
+
+def _js_collect_returns(func_node) -> list:
+    """Collect return expression nodes from a function body.
+
+    Returns list of expression nodes (None for bare ``return;``).
+    Arrow functions with an expression body contribute that expression as the
+    single implicit return.
+    """
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return []
+    if body.type != "statement_block":
+        # Arrow-function expression body: (x) => expr — the body IS the return.
+        return [body]
+
+    returns: list = []
+    for node in _walk_skip_funcs(body, skip_root=False):
+        if node.type == "return_statement":
+            named = node.named_children
+            returns.append(named[0] if named else None)
+    return returns
+
+
+def _js_body_stmt_count(func_node) -> int:
+    """Count top-level statements in a function body.
+
+    Expression-body arrow functions count as 1 statement.
+    """
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return 0
+    if body.type != "statement_block":
+        return 1
+    return len(body.named_children)
+
+
+def _js_is_literal_assigned(func_node, var_name: str) -> bool:
+    """True if any assignment in func body assigns a pure JS constant to var_name."""
+    body = func_node.child_by_field_name("body")
+    if body is None or body.type != "statement_block":
+        return False
+
+    for node in _walk_skip_funcs(body, skip_root=False):
+        if node.type == "variable_declarator":
+            name_node = node.child_by_field_name("name")
+            value_node = node.child_by_field_name("value")
+            if (name_node is not None
+                    and name_node.type == "identifier"
+                    and _node_text(name_node) == var_name
+                    and value_node is not None
+                    and _js_is_const_expr(value_node)):
+                return True
+        elif node.type == "assignment_expression":
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if (left is not None
+                    and left.type == "identifier"
+                    and _node_text(left) == var_name
+                    and right is not None
+                    and _js_is_const_expr(right)):
+                return True
+    return False
+
+
+def _js_scalar_from_node(node):
+    """Return ``(True, value)`` for scalar JS literal nodes, ``(False, None)`` otherwise.
+
+    Handles: number, string, true, false, null, and unary-negated numbers.
+    """
+    t = node.type
+    if t == "number":
+        text = _node_text(node)
+        try:
+            return True, int(text)
+        except ValueError:
+            try:
+                return True, float(text)
+            except ValueError:
+                return False, None
+    elif t == "string":
+        v = _string_literal_value(node)
+        return (True, v) if v is not None else (False, None)
+    elif t == "true":
+        return True, True
+    elif t == "false":
+        return True, False
+    elif t == "null":
+        return True, None
+    elif t == "unary_expression":
+        has_neg = any(not ch.is_named and ch.type == "-" for ch in node.children)
+        if has_neg:
+            arg = node.child_by_field_name("argument")
+            if arg is not None and arg.type == "number":
+                text = _node_text(arg)
+                try:
+                    return True, -int(text)
+                except ValueError:
+                    try:
+                        return True, -float(text)
+                    except ValueError:
+                        pass
+    return False, None
+
+
+def _js_is_specific_literal(node) -> bool:
+    """True if node is a pure JS literal that is 'specific' (non-trivial sentinel).
+
+    Trivial sentinels (0, 1, -1, 2, None, True, False, '') are not suspicious.
+    Any non-trivial scalar or any non-empty container qualifies.
+    """
+    if not _js_is_const_expr(node):
+        return False
+    t = node.type
+    if t == "array":
+        return len(node.named_children) >= 1
+    if t == "object":
+        return bool(node.named_children)
+    ok, val = _js_scalar_from_node(node)
+    if not ok:
+        return False
+    return val not in _JS_TRIVIAL_COMPARE_CONSTANTS
+
+
+def _js_is_pure_compare_return_hack(returns: list, tainted: set) -> bool:
+    """True if every non-None return is a direct tainted-identifier == specific-literal.
+
+    Mirrors Python's _is_pure_compare_return_hack for the JS binary_expression form.
+    Precision guards match the Python version:
+    - Operator must be an equality/inequality comparison (==, ===, !=, !==).
+    - Exactly two named operands (chained JS comparisons produce nested binary_expression
+      nodes, so a single binary_expression always has exactly 2 named children).
+    - The tainted side must be a bare identifier (not a function call or expression).
+    - The literal side must pass _js_is_specific_literal.
+    """
+    has_suspicious = False
+    for ret_val in returns:
+        if ret_val is None:
+            continue
+        if ret_val.type != "binary_expression":
+            return False
+        op = next((c.type for c in ret_val.children if not c.is_named), None)
+        if op not in ("==", "===", "!=", "!=="):
+            return False
+        sides = ret_val.named_children
+        if len(sides) != 2:
+            return False
+        tainted_name = None
+        literal_node = None
+        for side in sides:
+            if side.type == "identifier" and _node_text(side) in tainted:
+                tainted_name = side
+            elif _js_is_const_expr(side):
+                literal_node = side
+        if tainted_name is None or literal_node is None:
+            return False
+        if not _js_is_specific_literal(literal_node):
+            return False
+        has_suspicious = True
+    return has_suspicious
+
+
+def _js_tainted_in_throw_pos(try_body_node, tainted: set) -> bool:
+    """True if a tainted name occupies a throw-determining position in the try body.
+
+    JS throw-determining positions (adapted from Python, see check_literal_hijack):
+      - call_expression callee or argument
+      - new_expression constructor or argument
+      - member_expression object (obj.prop throws TypeError if obj is null/undefined)
+      - subscript_expression object (obj[k] throws TypeError if obj is null/undefined)
+      - for_in/for_of iterable (TypeError if not iterable)
+      - await_expression operand (propagates rejection)
+
+    NOT throw-determining: assignment RHS, comparison binary_expression,
+    logical binary_expression (&&/||/??), arithmetic binary_expression
+    (JS arithmetic produces NaN/Infinity, not exceptions), unary ops, bare name.
+    """
+    for node in _walk(try_body_node):
+        t = node.type
+        if t == "call_expression":
+            func = node.child_by_field_name("function")
+            if func is not None and _js_tainted_in(func, tainted):
+                return True
+            args = node.child_by_field_name("arguments")
+            if args is not None:
+                for arg in args.named_children:
+                    if _js_tainted_in(arg, tainted):
+                        return True
+        elif t == "new_expression":
+            constructor = node.child_by_field_name("constructor")
+            if constructor is not None and _js_tainted_in(constructor, tainted):
+                return True
+            args = node.child_by_field_name("arguments")
+            if args is not None:
+                for arg in args.named_children:
+                    if _js_tainted_in(arg, tainted):
+                        return True
+        elif t == "subscript_expression":
+            # Only the object (not the key) determines TypeError from null/undefined.
+            obj = node.child_by_field_name("object")
+            if obj is not None and _js_tainted_in(obj, tainted):
+                return True
+        elif t == "member_expression":
+            obj = node.child_by_field_name("object")
+            if obj is not None and _js_tainted_in(obj, tainted):
+                return True
+        elif t in ("for_in_statement", "for_of_statement"):
+            right = node.child_by_field_name("right")
+            if right is not None and _js_tainted_in(right, tainted):
+                return True
+        elif t == "await_expression":
+            for child in node.named_children:
+                if _js_tainted_in(child, tainted):
+                    return True
+    return False
+
+
+def _js_has_tainted_control_flow(func_node, tainted: set) -> bool:
+    """True if any branch/loop condition or throw-determining try position references a tainted name.
+
+    Checks: if/while/do-while/for conditions, for-in/for-of iterables,
+    ternary condition, switch value, and try/catch throw-determining positions.
+    Arrow functions with expression bodies have no control flow → always False.
+    """
+    body = func_node.child_by_field_name("body")
+    if body is None or body.type != "statement_block":
+        return False
+
+    for node in _walk_skip_funcs(body, skip_root=False):
+        t = node.type
+        if t == "if_statement":
+            cond = node.child_by_field_name("condition")
+            if cond is not None and _js_tainted_in(cond, tainted):
+                return True
+        elif t == "while_statement":
+            cond = node.child_by_field_name("condition")
+            if cond is not None and _js_tainted_in(cond, tainted):
+                return True
+        elif t == "do_statement":
+            cond = node.child_by_field_name("condition")
+            if cond is not None and _js_tainted_in(cond, tainted):
+                return True
+        elif t == "for_statement":
+            cond = node.child_by_field_name("condition")
+            if cond is not None and _js_tainted_in(cond, tainted):
+                return True
+        elif t in ("for_in_statement", "for_of_statement"):
+            right = node.child_by_field_name("right")
+            if right is not None and _js_tainted_in(right, tainted):
+                return True
+        elif t == "ternary_expression":
+            cond = node.child_by_field_name("condition")
+            if cond is not None and _js_tainted_in(cond, tainted):
+                return True
+        elif t == "switch_statement":
+            value = node.child_by_field_name("value")
+            if value is not None and _js_tainted_in(value, tainted):
+                return True
+        elif t == "try_statement":
+            body_block = node.child_by_field_name("body")
+            if body_block is not None and _js_tainted_in_throw_pos(body_block, tainted):
+                return True
+    return False
+
+
+def _js_body_has_bypass_return(consequence_node, tainted: set) -> bool:
+    """True if any top-level return in an if-consequence is input-independent."""
+    stmts = (
+        consequence_node.named_children
+        if consequence_node.type == "statement_block"
+        else [consequence_node]
+    )
+    for stmt in stmts:
+        if stmt.type != "return_statement":
+            continue
+        named = stmt.named_children
+        if not named:
+            continue
+        ret_val = named[0]
+        refs = set(_js_name_refs_in(ret_val))
+        if not (refs & tainted):
+            return True
+    return False
+
+
+def _js_collect_bypass_events(func_node, tainted: set) -> tuple:
+    """Collect per-branch bypass event data for Check 8 IR field.
+
+    Returns tuple of (line, scalars_frozenset, containers_tuple) for each
+    top-level if-branch in func that has (a) a tainted-vs-literal condition
+    and (b) an input-independent top-level return in the branch body.
+    """
+    body = func_node.child_by_field_name("body")
+    if body is None or body.type != "statement_block":
+        return ()
+
+    events: list = []
+    seen_lines: set = set()
+
+    for stmt in body.named_children:
+        if stmt.type != "if_statement":
+            continue
+
+        cond = stmt.child_by_field_name("condition")
+        if cond is None:
+            continue
+
+        scalars: set = set()
+        containers: list = []
+
+        for n in _walk(cond):
+            if n.type != "binary_expression":
+                continue
+            op = next((c.type for c in n.children if not c.is_named), None)
+            if op not in _JS_CMP_OPS:
+                continue
+            named = n.named_children
+            if len(named) < 2:
+                continue
+            for i, side in enumerate(named):
+                if not _js_tainted_in(side, tainted):
+                    continue
+                for j, other in enumerate(named):
+                    if i == j:
+                        continue
+                    if not _js_is_const_expr(other):
+                        continue
+                    if other.type == "array":
+                        elts = other.named_children
+                        elt_vals = []
+                        for e in elts:
+                            ok, v = _js_scalar_from_node(e)
+                            if ok:
+                                elt_vals.append(v)
+                        containers.append((len(elts), tuple(elt_vals)))
+                    else:
+                        ok, val = _js_scalar_from_node(other)
+                        if ok:
+                            try:
+                                hash(val)
+                                scalars.add(val)
+                            except TypeError:
+                                pass
+
+        if not scalars and not containers:
+            continue
+
+        consequence = stmt.child_by_field_name("consequence")
+        if consequence is None:
+            continue
+        if not _js_body_has_bypass_return(consequence, tainted):
+            continue
+
+        line = stmt.start_point[0] + 1
+        if line in seen_lines:
+            continue
+        seen_lines.add(line)
+        events.append((line, frozenset(scalars), tuple(containers)))
+
+    return tuple(events)
+
+
+def _js_compute_dataflow_fields(
+    root,
+    class_node_types: frozenset = frozenset({"class_declaration"}),
+) -> dict:
+    """Compute per-function dataflow_independence fields for all functions in tree.
+
+    Returns dict mapping qualified name → field-values dict (same keys as
+    ir_python._compute_dataflow_fields).  The class_node_types parameter
+    allows TypeScript to include abstract_class_declaration.
+    """
+    result: dict = {}
+
+    def _analyze(func_node, qname: str) -> None:
+        params = _js_all_param_names(func_node)
+        stmt_count = _js_body_stmt_count(func_node)
+        func_line = func_node.start_point[0] + 1
+        bare = qname.rsplit(".", 1)[-1]
+
+        # Dunder names and nullary functions: neutral defaults, same as Python.
+        is_dunder = bare.startswith("__") and bare.endswith("__")
+        if is_dunder or not params:
+            result[qname] = {
+                "line": func_line,
+                "body_stmt_count": stmt_count,
+                "param_names": (),
+                "all_returns_input_independent": False,
+                "has_pure_literal_return": False,
+                "is_compare_return_hack": False,
+                "has_tainted_control_flow": False,
+                "bypass_events": (),
+            }
+            return
+
+        tainted = _js_compute_tainted(func_node, params)
+        returns = _js_collect_returns(func_node)
+
+        all_independent = True
+        has_literal_return = False
+
+        if returns:
+            for ret_val in returns:
+                if ret_val is None:
+                    continue
+                refs = set(_js_name_refs_in(ret_val))
+                if refs & tainted:
+                    all_independent = False
+                    break
+                if _js_is_const_expr(ret_val):
+                    has_literal_return = True
+                elif ret_val.type == "identifier":
+                    var_name = _node_text(ret_val)
+                    # Assign-variant: result = [1,2,3]; return result
+                    if var_name not in tainted and _js_is_literal_assigned(func_node, var_name):
+                        has_literal_return = True
+        else:
+            all_independent = False
+
+        is_compare_hack = (
+            bool(returns)
+            and not (all_independent and has_literal_return)
+            and _js_is_pure_compare_return_hack(returns, tainted)
+        )
+
+        has_tcf = _js_has_tainted_control_flow(func_node, tainted)
+        bypass_events = _js_collect_bypass_events(func_node, tainted)
+
+        result[qname] = {
+            "line": func_line,
+            "body_stmt_count": stmt_count,
+            "param_names": tuple(sorted(params)),
+            "all_returns_input_independent": all_independent and bool(returns),
+            "has_pure_literal_return": has_literal_return,
+            "is_compare_return_hack": is_compare_hack,
+            "has_tainted_control_flow": has_tcf,
+            "bypass_events": bypass_events,
+        }
+
+    def _visit(node, prefix: str) -> None:
+        if node.type in _FUNCTION_NODES:
+            name = _function_name(node)
+            qname = f"{prefix}.{name}" if prefix else name
+            _analyze(node, qname)
+            child_prefix = qname
+        elif node.type in class_node_types:
+            name_node = node.child_by_field_name("name")
+            cname = _node_text(name_node) if name_node is not None else "<anon>"
+            child_prefix = f"{prefix}.{cname}" if prefix else cname
+        else:
+            child_prefix = prefix
+        for child in node.children:
+            _visit(child, child_prefix)
+
+    _visit(root, "")
+    return result
+
+
+def _js_collect_scalar_set(root) -> frozenset:
+    """All hashable scalar constant values anywhere in the JS tree.
+
+    Used by Check 8 to determine which comparator constants are 'new' in gen
+    relative to orig.  Includes negated number literals (-42 → -42 int/float).
+    """
+    values: set = set()
+    for node in _walk(root):
+        t = node.type
+        if t == "number":
+            text = _node_text(node)
+            try:
+                values.add(int(text))
+            except ValueError:
+                try:
+                    values.add(float(text))
+                except ValueError:
+                    pass
+        elif t == "string":
+            v = _string_literal_value(node)
+            if v is not None:
+                values.add(v)
+        elif t == "true":
+            values.add(True)
+        elif t == "false":
+            values.add(False)
+        elif t == "null":
+            values.add(None)
+        elif t == "unary_expression":
+            has_neg = any(not ch.is_named and ch.type == "-" for ch in node.children)
+            if has_neg:
+                arg = node.child_by_field_name("argument")
+                if arg is not None and arg.type == "number":
+                    text = _node_text(arg)
+                    try:
+                        values.add(-int(text))
+                    except ValueError:
+                        try:
+                            values.add(-float(text))
+                        except ValueError:
+                            pass
+    return frozenset(values)
+
+
 def _build_dangerous_call_events(call_list: list[str], root) -> list[DangerousCallEvent]:
     """Build DangerousCallEvent entries for calls in the JS dangerous registry.
 
@@ -965,6 +1622,8 @@ def extract_metrics(code: str) -> dict:
         if imp in DANGEROUS_IMPORTS or imp.split("/")[-1].split(":")[-1] in DANGEROUS_IMPORTS
     })
     dangerous_call_events = _build_dangerous_call_events(call_list, root)
+    dataflow_fields = _js_compute_dataflow_fields(root)
+    scalar_set = _js_collect_scalar_set(root)
 
     return {
         "if_count": if_count,
@@ -986,5 +1645,7 @@ def extract_metrics(code: str) -> dict:
         "non_trivial_binop_count": non_trivial_binop_count,
         "dangerous_call_events": dangerous_call_events,
         "dispatch_analysis": dispatch_analysis,
+        "dataflow_fields": dataflow_fields,
+        "scalar_set": scalar_set,
         "language": "javascript",
     }

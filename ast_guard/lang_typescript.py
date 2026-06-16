@@ -56,6 +56,7 @@ from ast_guard.lang_javascript import (
     _if_condition_has_literal,
     _is_js_literal,
     _js_collect_module_tables,
+    _js_compute_dataflow_fields,
     _js_scan_dispatch_in_func,
     _loop_depth,
     _node_text,
@@ -275,6 +276,59 @@ def _collect_dispatch_analysis_ts(root) -> list:
 
 
 # ---------------------------------------------------------------------------
+# TS-specific dataflow and scalar-set overrides
+# ---------------------------------------------------------------------------
+
+def _ts_collect_scalar_set(root) -> frozenset:
+    """All hashable scalar constant values, excluding TS type-level constructs.
+
+    Uses _walk_ts_runtime so string/number literals inside type aliases,
+    interface bodies, and enum member initialisers are not included.
+    """
+    values: set = set()
+    for node in _walk_ts_runtime(root):
+        t = node.type
+        if t == "number":
+            text = _node_text(node)
+            try:
+                values.add(int(text))
+            except ValueError:
+                try:
+                    values.add(float(text))
+                except ValueError:
+                    pass
+        elif t == "string":
+            v = _string_literal_value(node)
+            if v is not None:
+                values.add(v)
+        elif t == "true":
+            values.add(True)
+        elif t == "false":
+            values.add(False)
+        elif t == "null":
+            values.add(None)
+        elif t == "unary_expression":
+            has_neg = any(not ch.is_named and ch.type == "-" for ch in node.children)
+            if has_neg:
+                arg = node.child_by_field_name("argument")
+                if arg is not None and arg.type == "number":
+                    text = _node_text(arg)
+                    try:
+                        values.add(-int(text))
+                    except ValueError:
+                        try:
+                            values.add(-float(text))
+                        except ValueError:
+                            pass
+    return frozenset(values)
+
+
+def _ts_compute_dataflow_fields(root) -> dict:
+    """Compute dataflow_independence fields for TS, handling abstract_class_declaration."""
+    return _js_compute_dataflow_fields(root, class_node_types=_TS_CLASS_NODES)
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -310,6 +364,8 @@ def extract_metrics(code: str) -> dict:
         if imp in DANGEROUS_IMPORTS or imp.split("/")[-1].split(":")[-1] in DANGEROUS_IMPORTS
     })
     dangerous_call_events = _build_dangerous_call_events(call_list, root)
+    dataflow_fields = _ts_compute_dataflow_fields(root)
+    scalar_set = _ts_collect_scalar_set(root)
 
     return {
         "if_count": if_count,
@@ -331,5 +387,7 @@ def extract_metrics(code: str) -> dict:
         "non_trivial_binop_count": non_trivial_binop_count,
         "dangerous_call_events": dangerous_call_events,
         "dispatch_analysis": dispatch_analysis,
+        "dataflow_fields": dataflow_fields,
+        "scalar_set": scalar_set,
         "language": "typescript",
     }
