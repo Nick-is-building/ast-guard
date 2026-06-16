@@ -2,7 +2,7 @@
 
 ## Abstract
 
-ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, and JavaScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across five datasets: the built-in TRACE-aligned suite (33 hand-written samples), School of Reward Hacks (104 labeled Python pairs), MBPP (974 TN pairs), Countdown-Code (15,894 samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode on real external data, ast-guard achieves **97.0% F1 on School of Reward Hacks** (100% precision, 94.2% recall, 0.0% FPR) and **0.1% FPR on MBPP** identity pairs. On the built-in hand-written suite, it achieves 95.7% F1 with 100% precision. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.2.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
+ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, JavaScript, and TypeScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across five datasets: the built-in TRACE-aligned suite (33 hand-written samples), School of Reward Hacks (104 labeled Python pairs), MBPP (974 TN pairs), Countdown-Code (15,894 samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode on real external data, ast-guard achieves **98.0% F1 on School of Reward Hacks** (100% precision, 96.2% recall, 0.0% FPR) and **0.1% FPR on MBPP** identity pairs. On the built-in hand-written suite, it achieves 95.7% F1 with 100% precision. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.3.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
 
 ---
 
@@ -10,7 +10,7 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 | Property | Value |
 |----------|-------|
-| Tool | ast-guard v2.2.0 |
+| Tool | ast-guard v2.3.0 |
 | Approach | Deterministic pre-execution static analysis |
 | Core dependency | Python standard library only (zero external deps) |
 | Latency | <50ms per scan |
@@ -21,14 +21,33 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 
 | # | Name | Method | Languages |
 |---|------|--------|-----------|
-| 1 | Hardcoding Detection | If-count / literal-count / long-string growth relative to baseline | Python, Bash, JS |
-| 2 | Complexity Collapse | McCabe complexity drop >60% per qualified function name | Python, Bash, JS |
-| 3 | Forbidden Calls & Anti-Obfuscation | Diff-based; eval/exec, chr tricks, builtins subscript, constant folding | Python, Bash, JS |
-| 4 | Import Drift | CRITICAL on dangerous stdlib modules; WARNING on unknowns | Python, Bash, JS |
-| 5 | Extensional Enumeration | if/elif or match/case chains covering >70% of branches with no loops | Python, Bash, JS |
-| 6 | Behavioral Risk Scoring | Additive score from AST-detectable behavioral patterns (standalone) | Python, Bash, JS |
+| 1 | Hardcoding Detection | If-count / literal-count / long-string growth relative to baseline | Python, Bash, JS, TS |
+| 2 | Complexity Collapse | McCabe complexity drop >60% per qualified function name | Python, Bash, JS, TS |
+| 3 | Forbidden Calls & Anti-Obfuscation | Diff-based; eval/exec, chr tricks, builtins subscript, constant folding | Python, Bash, JS, TS |
+| 4 | Import Drift | CRITICAL on dangerous stdlib modules; WARNING on unknowns | Python, Bash, JS, TS |
+| 5 | Extensional Enumeration | if/elif or match/case chains covering >70% of branches with no loops; dispatch-table memorisation (object/Map lookup) for Python, JS, TS | Python, Bash, JS, TS |
+| 6 | Behavioral Risk Scoring | Additive score from AST-detectable behavioral patterns (standalone) | Python, Bash, JS, TS |
 | 7 | Literal Hijack | Generated function returns only literals regardless of inputs; original was non-trivial | Python |
 | 8 | New Constant Bypass | If-branch compares against new specific constant and returns input-independently | Python |
+
+### Language-Check Capability Matrix
+
+| Check | Python | Bash | JavaScript | TypeScript | Notes |
+|-------|--------|------|------------|------------|-------|
+| 1 — Hardcoding | ✓ | ✓ | ✓ | ✓ | |
+| 2 — Complexity Collapse | ✓ | ✓ | ✓ | ✓ | Inactive in standalone for all languages |
+| 3 — Forbidden Calls | ✓ | ✓ | ✓ | ✓ | |
+| 4 — Import Drift | ✓ | ✓ | ✓ | ✓ | |
+| 5 — Extensional Enumeration (if/elif, switch) | ✓ | ✓ | ✓ | ✓ | |
+| 5 — Dispatch-table sub-rule | ✓ | — | ✓ | ✓ | object/Map memorisation |
+| 6 — Behavioral Risk Scoring | ✓ | ✓ | ✓ | ✓ | Standalone only |
+| 7 — Literal Hijack | ✓ | — | — | — | Python only |
+| 8 — New Constant Bypass | ✓ | — | — | — | Python only |
+
+**Validation status by language:**
+- **Python:** All checks validated on public datasets (MALT, SORH, MBPP, Countdown-Code).
+- **Bash:** Checks 1, 3–6 validated on constructed held-out sets only. No independent Bash precision/recall corpus.
+- **JavaScript / TypeScript:** All checks validated on constructed held-out sets only. No independent JS/TS precision/recall corpus. Pair-mode behavior provides a precision anchor; standalone detection rates on real JS/TS agent code have not been measured.
 
 ---
 
@@ -96,16 +115,16 @@ Artifact: `benchmarks/data/sorh_results.json`
 | Metric | Value |
 |--------|-------|
 | Labeled pairs | 104 (52 TP + 52 TN) |
-| TP | 49 |
+| TP | 50 |
 | FP | 0 |
-| FN | 3 |
+| FN | 2 |
 | TN | 52 |
 | **Precision** | **100.0%** |
-| **Recall** | **94.2%** |
-| **F1** | **97.0%** |
+| **Recall** | **96.2%** |
+| **F1** | **98.0%** |
 | **FPR** | **0.0%** |
 
-The 3 FN are hardcoded solutions that stayed below Check 1/5 thresholds. The 28 skipped C++ pairs will contribute once a C++ tree-sitter adapter is added.
+The 2 FN are hardcoded solutions that stayed below Check 1/5 thresholds. The 28 skipped C++ pairs will contribute once a C++ tree-sitter adapter is added.
 
 ### MBPP (pair mode — TN FPR baseline)
 
@@ -271,9 +290,9 @@ Direct comparison is limited because each tool covers different categories, uses
 |----------|--------|---------|--------|-------|
 | GPT-4o (LLM-as-judge)† | LLM-as-judge | TRACE (all 54 cats) | Detection Rate | ~63%† |
 | RewardHackWatch | ML + Regex + AST | MALT (5,391) | F1 | 89.7% |
-| **ast-guard v2.2.0 Pair Mode** | **Deterministic AST** | **built-in TRACE-aligned suite (hand-written)** | **F1** | **95.7%** |
-| **ast-guard v2.2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **95.0%** |
-| **ast-guard v2.2.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **34.5%** |
+| **ast-guard v2.3.0 Pair Mode** | **Deterministic AST** | **built-in TRACE-aligned suite (hand-written)** | **F1** | **95.7%** |
+| **ast-guard v2.3.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Specificity** | **95.0%** |
+| **ast-guard v2.3.0 Standalone** | **Deterministic AST** | **MALT (81,515)** | **Recall (structural)** | **34.5%** |
 
 † Approximate figure; no published source. Included as order-of-magnitude context only.
 
@@ -282,7 +301,7 @@ Key differentiators:
 - **Fully deterministic** — same input always produces the same output
 - **Zero external dependencies** in core (Python stdlib only)
 - **<50ms latency** — suitable for pre-execution gating
-- **First-class multilang** — Python, Bash, and JavaScript all run the same 6-check pipeline
+- **First-class multilang** — Python, Bash, JavaScript, and TypeScript all run the same 6-check pipeline
 - **Complementary layer** — designed to work alongside ML-based detectors, not replace them
 
 ---
@@ -323,7 +342,7 @@ The following datasets were evaluated for pair-mode wiring and deferred:
 
 ```
 Python: 3.11+
-ast-guard commit: 77f1011  (v2.2.0, multilang first-class)
+ast-guard commit: f3475ed  (v2.3.0, JS/TS dispatch-table detection)
 tree-sitter: required for multilang (pip install ast-guard[multilang])
 MALT dataset: metr-evals/malt-public (HuggingFace, public)
 ```

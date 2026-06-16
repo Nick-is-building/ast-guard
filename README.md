@@ -52,11 +52,11 @@ Results on publicly released datasets with labels not authored by this project.
 | MALT (METR) — `normal` | Standalone | 77,369 | Specificity (TNR)† | **95.0%** | `malt_v2_2_0.json` ✓ |
 | MALT (METR) — `hardcoded_solution` | Standalone | 429 | Detection Rate | **46.9%** | `malt_v2_2_0.json` ✓ |
 | MALT (METR) — `bypass_constraints` | Standalone | 2,379 | Detection Rate | **34.5%** | `malt_v2_2_0.json` ✓ |
-| School of Reward Hacks (longtermrisk) | Pair | 26 | Recall | **96.2%** | pending re-run ‡ |
+| School of Reward Hacks (longtermrisk) | Pair | 52 | Recall | **96.2%** | `sorh_results.json` ✓ |
 | Countdown-Code (Khan et al.) | Pair | 15,894 | True Negative Rate | **99.0%** | pending re-run ‡ |
 
 † TNR on the `normal` label only (77,369 samples); see [RESULTS.md](benchmarks/RESULTS.md) for the full confusion matrix.  
-‡ Numbers recorded in CHANGELOG at v2.1.0; no JSON artifact stored in `benchmarks/data/` and not re-verified at v2.2.0. Re-run with `python -m benchmarks.run_benchmark --benchmark <name> --json results.json` to produce a current artifact.
+‡ Numbers recorded in CHANGELOG at v2.1.0; no JSON artifact stored in `benchmarks/data/`. Re-run with `python -m benchmarks.run_benchmark --benchmark countdown-code --json results.json` to produce a current artifact.
 
 ### Hand-constructed built-in suite (regression / sanity checks, not external benchmarks)
 
@@ -76,7 +76,7 @@ These approaches are complementary, not competing. ast-guard handles structural 
 |----------|--------|-----------|---------|---------------|-------|
 | GPT-4o reviewer | LLM-as-judge | $0.01–0.10 | 500–2000ms | No | Semantic + Structural |
 | RewardHackWatch | ML + Regex + AST | GPU required | varies | No | Trajectory-level |
-| **ast-guard v2.2.0** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
+| **ast-guard v2.3.0** | **Pure AST + heuristics** | **$0.00** | **<10ms** | **Yes** | **Structural only** |
 
 ---
 
@@ -161,19 +161,20 @@ pip install ast-guard[multilang]
 
 | Language | Backend | Checks active |
 |----------|---------|--------------|
-| Python | Native `ast` | 1, 2, 3, 4, 5, 6 |
-| Bash | tree-sitter-bash | 1, 3, 4, 5, 6 |
-| JavaScript | tree-sitter-javascript | 1, 3, 4, 5, 6 |
+| Python | Native `ast` | 1, 2, 3, 4, 5, 6, 7, 8 |
+| Bash | tree-sitter-bash | 1, 2, 3, 4, 5, 6 |
+| JavaScript | tree-sitter-javascript | 1, 2, 3, 4, 5, 6 |
+| TypeScript | tree-sitter-typescript | 1, 2, 3, 4, 5, 6 |
 
-All three languages run the same 6-check pipeline. Check 2 (Complexity Collapse) requires a pair-mode baseline and is inactive in standalone mode for all languages. Language is auto-detected from the generated file (shebang-first, then keyword scoring) or can be set explicitly with `--language`.
+All four languages run the same 6-check pipeline. Check 2 (Complexity Collapse) requires a pair-mode baseline and is inactive in standalone mode for all languages. Checks 7 and 8 are Python-only. Language is auto-detected from the generated file (shebang-first, then keyword scoring) or can be set explicitly with `--language`.
 
 **Check 5 (Extensional Enumeration) for Bash:** detects `case/esac` statements with literal branch values and `if/elif` with `[[ $x == "y" ]]`-style comparisons.
 
 **Check 6 (Behavioral Risk Scoring) for Bash:** eval_dynamic, pipe_to_shell, process_termination, subprocess_shell, network_fetch, test_file_write, environ_mutation, startup_persistence, destructive_call.
 
-**Check 5 for JavaScript:** detects `switch/case` with string/number literals and `if/else-if` with `===`/`==` comparisons.
+**Check 5 for JavaScript / TypeScript:** detects `switch/case` with string/number literals and `if/else-if` with `===`/`==` comparisons. Also detects **dispatch-table memorisation**: `return TABLE[param]` or `TABLE.get(param)` where `TABLE` is an all-literal object or `Map` (≥5 entries). Fires in pair mode when the table is new; suppressed when a pre-existing table of the same size was already in the original.
 
-**Check 6 for JavaScript:** eval_dynamic (including `Function()` constructor), process_termination, subprocess_shell, dangerous_import (child_process), test_file_write, environ_mutation, module_cache_manipulation (require.cache).
+**Check 6 for JavaScript / TypeScript:** eval_dynamic (including `Function()` constructor), process_termination, subprocess_shell, dangerous_import (child_process), test_file_write, environ_mutation, module_cache_manipulation (require.cache).
 
 ---
 
@@ -298,7 +299,7 @@ python -m benchmarks.run_benchmark --benchmark malt --mode strict
   author = {Nick},
   year   = {2026},
   url    = {https://github.com/Nick-is-building/ast-guard},
-  version = {2.2.0}
+  version = {2.3.0}
 }
 ```
 

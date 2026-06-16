@@ -1,4 +1,4 @@
-__version__ = "2.2.1"
+__version__ = "2.3.0"
 __all__ = ["scan", "scan_multilang", "scan_standalone", "feedback"]
 
 import ast
