@@ -63,6 +63,13 @@ _TS_ENHANCEMENTS = EnhancementFlags(
     dataflow_independence="supported",
 )
 
+# Bash: case-statement enumeration works via enumeration_analysis; all other
+# enhancements are not_applicable (no functions-with-returns, no dispatch-table
+# idiom, no taint/dataflow, no docstrings).
+_BASH_ENHANCEMENTS = EnhancementFlags(
+    match_case_enumeration="partial",
+)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -540,6 +547,8 @@ def metrics_to_stub_ir(metrics: dict, language: str = "python") -> CodeIR:
         enh = _JS_ENHANCEMENTS
     elif language == "typescript":
         enh = _TS_ENHANCEMENTS
+    elif language == "bash":
+        enh = _BASH_ENHANCEMENTS
     else:
         enh = EnhancementFlags()  # all not_applicable
 
@@ -583,6 +592,8 @@ def empty_ir(language: str = "python") -> CodeIR:
         enh = _JS_ENHANCEMENTS
     elif language == "typescript":
         enh = _TS_ENHANCEMENTS
+    elif language == "bash":
+        enh = _BASH_ENHANCEMENTS
     else:
         enh = EnhancementFlags()
     return CodeIR(language=language, enhancements=enh)
