@@ -421,13 +421,20 @@ def _js_all_literal_object(node) -> bool:
 def _js_object_table_info(node) -> tuple:
     """Return (entry_count, all_literal) for an object literal or new Map([...]).
 
-    Returns (0, False) for anything else or an empty/runtime-built structure.
-
-    Limitation: ``TABLE as const`` (TypeScript type assertion wrapping the
-    object) returns (0, False) because the outer node is as_expression.
+    Transparently unwraps TypeScript type-assertion wrappers before analysis:
+      as_expression        -- ``{...} as const``, ``{...} as T``
+      satisfies_expression -- ``{...} satisfies Record<K,V>``
+    Both wrappers are structural-only; the runtime object is unchanged.
     """
     if node is None:
         return 0, False
+    # Unwrap TS-only wrappers: as_expression and satisfies_expression both carry
+    # the runtime value as their first named child.
+    while node.type in ("as_expression", "satisfies_expression"):
+        named = node.named_children
+        if not named:
+            return 0, False
+        node = named[0]
     t = node.type
 
     if t == "object":
@@ -675,13 +682,18 @@ def _js_check_dispatch_return(ret_value, params: frozenset,
             return 0, False
         if not _js_is_param_key(index, params):
             return 0, False
-        if obj.type == "object":
-            return _js_object_table_info(obj)
+        # Unwrap ({...} as const)[x]: parenthesized_expression around an as/satisfies
+        if obj.type == "parenthesized_expression":
+            named = obj.named_children
+            obj = named[0] if named else obj
+        # Named table reference (identifier → look up in collected tables)
         if obj.type == "identifier":
             info = local_tables.get(_node_text(obj)) or module_tables.get(_node_text(obj))
             if info is not None:
                 return info
-        return 0, False
+            return 0, False
+        # Inline table: object literal, as_expression, satisfies_expression, or new Map
+        return _js_object_table_info(obj)
 
     # TABLE.get(key) or TABLE.get(key, default)
     if t == "call_expression":

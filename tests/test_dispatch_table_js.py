@@ -354,6 +354,78 @@ function f(n) {
         assert d["dispatch_all_literal"] is True
 
 
+@skip_no_ts
+class TestAsConst:
+    """as const / satisfies unwrapping — TS-idiomatic dispatch tables."""
+
+    def test_module_level_as_const(self):
+        """const ANSWERS = {...} as const; return ANSWERS[x] — named module table."""
+        code = """
+const ANSWERS = {1:1, 2:3, 3:6, 4:10, 5:15} as const;
+function solve(n: number): number { return ANSWERS[n]; }
+"""
+        d = _dispatch_for_ts(code, "solve")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_local_as_const(self):
+        """Local const T = {...} as const inside the function."""
+        code = """
+function f(n: number): number {
+    const T = {1:"a", 2:"b", 3:"c", 4:"d", 5:"e"} as const;
+    return T[n];
+}
+"""
+        d = _dispatch_for_ts(code, "f")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_inline_as_const_subscript(self):
+        """({...} as const)[x] — inline as-const subscript."""
+        code = """
+function f(n: number): string {
+    return ({1:"one", 2:"two", 3:"three", 4:"four", 5:"five"} as const)[n];
+}
+"""
+        d = _dispatch_for_ts(code, "f")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_satisfies_expression(self):
+        """const T = {...} satisfies Record<number,string> — satisfies unwrapped."""
+        code = """
+function f(n: number): string {
+    const T = {1:"a", 2:"b", 3:"c", 4:"d", 5:"e"} satisfies Record<number, string>;
+    return T[n];
+}
+"""
+        d = _dispatch_for_ts(code, "f")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_as_type_alias(self):
+        """const T = {...} as MyType — non-const type assertion also unwrapped."""
+        code = """
+type Lookup = {[k: number]: string};
+function f(n: number): string {
+    const T = {1:"a", 2:"b", 3:"c", 4:"d", 5:"e"} as Lookup;
+    return T[n];
+}
+"""
+        d = _dispatch_for_ts(code, "f")
+        assert d["dispatch_table_size"] == 5
+        assert d["dispatch_all_literal"] is True
+
+    def test_pair_mode_as_const_fires(self):
+        """End-to-end pair mode: new as const table in gen fires WARNING."""
+        orig = "function solve(n: number): number { return n * (n + 1) / 2; }"
+        gen = """
+const ANSWERS = {1:1, 2:3, 3:6, 4:10, 5:15, 6:21, 7:28} as const;
+function solve(n: number): number { return ANSWERS[n]; }
+"""
+        assert _check5_ts(orig, gen) == "WARNING"
+
+
 # ---------------------------------------------------------------------------
 # Check 5 pair-mode integration (JS)
 # ---------------------------------------------------------------------------
