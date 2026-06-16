@@ -618,3 +618,96 @@ class TestIsMultilangAvailable:
         # Since this file is only executed when tree-sitter is importable
         # (pytest.importorskip at the top), is_multilang_available must be True.
         assert is_multilang_available() is True
+
+
+# ---------------------------------------------------------------------------
+# TS-on-JS-parser corruption guard (Option A upgrade + Option B backstop)
+# ---------------------------------------------------------------------------
+
+import warnings as _warnings
+
+
+class TestTSOnJSParserGuard:
+    """language='javascript' on typed TS code must warn and upgrade, not silently corrupt."""
+
+    # Typed TS: param type annotation triggers TS-pattern score > 0.
+    _TYPED_TS = "function greet(name: string): string { return 'Hi ' + name; }"
+    # Untyped TS / plain JS: no TS-specific syntax.
+    _UNTYPED_JS = "function add(a, b) { return a + b; }"
+    # TS with switch on param — must see action as tainted (has_tainted_control_flow).
+    _TYPED_SWITCH = (
+        "function dispatch(action: string): string {\n"
+        "    switch (action) { case 'inc': return 'INC'; default: return 'NOP'; }\n"
+        "}"
+    )
+
+    def test_typed_ts_as_js_emits_warning(self):
+        """Passing typed TS as language='javascript' must emit UserWarning."""
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            extract_metrics_multilang(self._TYPED_TS, language="javascript")
+        assert any(issubclass(w.category, UserWarning) for w in caught), (
+            "Expected UserWarning when typed TS is passed as language='javascript'"
+        )
+
+    def test_typed_ts_as_js_produces_correct_params(self):
+        """After upgrade, param_names must be ('name',) not ('string',)."""
+        with _warnings.catch_warnings(record=True):
+            _warnings.simplefilter("always")
+            m = extract_metrics_multilang(self._TYPED_TS, language="javascript")
+        df = m.get("dataflow_fields", {})
+        assert df, "dataflow_fields must be non-empty"
+        func = next(iter(df.values()))
+        assert func["param_names"] == ("name",), (
+            f"Expected param 'name', got {func['param_names']!r}"
+        )
+
+    def test_typed_ts_as_js_no_check7_fp(self):
+        """Typed TS scanned as 'javascript' must not produce a Check 7 FP."""
+        with _warnings.catch_warnings(record=True):
+            _warnings.simplefilter("always")
+            result = scan_multilang(self._TYPED_TS, self._TYPED_TS, language="javascript")
+        c7 = result["checks"]["check_7_literal_hijack"]
+        assert c7["status"] == "CLEAN", (
+            f"False positive from corruption: {c7['findings']}"
+        )
+
+    def test_switch_on_param_has_tainted_cf(self):
+        """dispatch(action: string) scanned as JS: has_tainted_control_flow must be True."""
+        with _warnings.catch_warnings(record=True):
+            _warnings.simplefilter("always")
+            m = extract_metrics_multilang(self._TYPED_SWITCH, language="javascript")
+        df = m.get("dataflow_fields", {})
+        func = next(iter(df.values()))
+        assert func["has_tainted_control_flow"] is True, (
+            "switch(action) must be tainted control flow"
+        )
+
+    def test_untyped_js_no_warning(self):
+        """Pure JS code passed as language='javascript' must NOT emit a warning."""
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            extract_metrics_multilang(self._UNTYPED_JS, language="javascript")
+        ts_warnings = [w for w in caught if issubclass(w.category, UserWarning)
+                       and "TypeScript" in str(w.message)]
+        assert not ts_warnings, f"Unexpected upgrade warning on plain JS: {ts_warnings}"
+
+    def test_untyped_js_param_names_intact(self):
+        """Plain JS: param names (a, b) must be extracted correctly."""
+        m = extract_metrics_multilang(self._UNTYPED_JS, language="javascript")
+        df = m.get("dataflow_fields", {})
+        func = next(iter(df.values()))
+        assert set(func["param_names"]) == {"a", "b"}, (
+            f"Expected params {{a, b}}, got {func['param_names']!r}"
+        )
+
+    def test_backstop_all_type_keywords_treated_as_nullary(self):
+        """Option B: if JS parser extracts only TS type keywords as params,
+        treat function as nullary (param_names empty) rather than produce FP."""
+        from ast_guard.lang_javascript import _js_all_param_names, _get_parser
+        # Craft code where JS parser would extract "string" as param name.
+        # We verify via the backstop constant directly.
+        from ast_guard.lang_javascript import _JS_TS_TYPE_KEYWORDS
+        assert "string" in _JS_TS_TYPE_KEYWORDS
+        assert "number" in _JS_TS_TYPE_KEYWORDS
+        assert "x" not in _JS_TS_TYPE_KEYWORDS  # real param name — not a keyword

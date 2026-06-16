@@ -100,7 +100,7 @@ def main():
     check_parser.add_argument("--sarif", action="store_true", help="Output the analysis report in SARIF v2.1.0 format for GitHub Security Tab")
     check_parser.add_argument("--no-telemetry", action="store_true", help="Disables local telemetry logging")
     check_parser.add_argument(
-        "--language", choices=["python", "bash", "javascript", "auto"], default="auto",
+        "--language", choices=["python", "bash", "javascript", "typescript", "auto"], default="auto",
         help="Source language of the files being scanned (default: auto-detect)"
     )
     check_parser.add_argument(

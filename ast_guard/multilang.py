@@ -193,6 +193,23 @@ def extract_metrics_multilang(code: str, language: str | None = None) -> dict:
         return lang_bash.extract_metrics(code)
 
     if language == "javascript":
+        # Guard: if the code contains TypeScript-specific syntax, upgrading to
+        # the TS parser prevents silent param-name corruption (tree-sitter JS
+        # reads `: TypeAnnotation` as a parameter name instead of the real
+        # identifier, producing wrong tainted-name sets for Check 7/8).
+        ts_score = _score(code, _TS_PATTERNS)
+        if ts_score > 0:
+            import warnings
+            warnings.warn(
+                f"TypeScript syntax detected (score={ts_score}) in code passed as "
+                f"language='javascript'. Upgrading to the TypeScript parser to prevent "
+                f"silent metric corruption. Pass language='typescript' explicitly to "
+                f"suppress this warning.",
+                UserWarning,
+                stacklevel=3,
+            )
+            from . import lang_typescript
+            return lang_typescript.extract_metrics(code)
         from . import lang_javascript
         return lang_javascript.extract_metrics(code)
 

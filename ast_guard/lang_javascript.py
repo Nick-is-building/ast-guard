@@ -901,6 +901,16 @@ def _count_non_trivial_binops(root) -> int:
 # even when they are new constants absent from the original code.
 _JS_TRIVIAL_COMPARE_CONSTANTS: frozenset = frozenset({0, 1, -1, 2, None, True, False, ""})
 
+# TypeScript primitive type keywords. When the JS parser is mistakenly used on
+# typed TypeScript code it reads `: TypeAnnotation` tokens as parameter names
+# (e.g. `(name: string)` → param "string"). If ALL collected param names are
+# these keywords, we conservatively return an empty set so Check 7/8 treat the
+# function as nullary (skip) rather than producing a corrupt FP.
+_JS_TS_TYPE_KEYWORDS: frozenset = frozenset({
+    "string", "number", "boolean", "void", "any", "never", "unknown",
+    "object", "symbol", "bigint",
+})
+
 # Comparison operators that indicate a tainted-vs-literal check in a condition.
 _JS_CMP_OPS: frozenset = frozenset({"==", "===", "!=", "!==", "<", ">", "<=", ">="})
 
@@ -946,7 +956,14 @@ def _js_collect_pattern_names(node, names: set) -> None:
 
 
 def _js_all_param_names(func_node) -> frozenset:
-    """Collect all parameter names including destructured ones for dataflow analysis."""
+    """Collect all parameter names including destructured ones for dataflow analysis.
+
+    If every extracted name is a TypeScript primitive type keyword (e.g.
+    "string", "number"), the JS parser has likely misread a TS type annotation
+    as a parameter name. Returning an empty frozenset in that case makes
+    Check 7/8 treat the function as nullary (conservative skip) rather than
+    emitting a false positive based on the phantom "string" param.
+    """
     params_node = func_node.child_by_field_name("parameters")
     single_param = False
     if params_node is None:
@@ -958,10 +975,14 @@ def _js_all_param_names(func_node) -> frozenset:
     names: set = set()
     if single_param:
         _js_collect_pattern_names(params_node, names)
-        return frozenset(names)
+    else:
+        for child in params_node.named_children:
+            _js_collect_pattern_names(child, names)
 
-    for child in params_node.named_children:
-        _js_collect_pattern_names(child, names)
+    # Backstop: if every name looks like a TS type keyword, the JS parser
+    # corrupted the param list — treat as nullary to avoid FP.
+    if names and names <= _JS_TS_TYPE_KEYWORDS:
+        return frozenset()
     return frozenset(names)
 
 
