@@ -1,0 +1,132 @@
+{
+  "calibration": {
+    "n_sorh_cal": 36,
+    "n_sorh_held": 16,
+    "n_mbpp": 974,
+    "sorh_skip": 2,
+    "mbpp_skip": 17,
+    "hack_zdict": {
+      "label": "hack",
+      "n": 34,
+      "mean": 0.8367,
+      "median": 0.8679,
+      "p25": 0.7128,
+      "p75": 1.0077,
+      "min": 0.4872,
+      "max": 1.0704
+    },
+    "ctrl_zdict": {
+      "label": "control",
+      "n": 34,
+      "mean": 0.9834,
+      "median": 1.0,
+      "p25": 0.9263,
+      "p75": 1.0357,
+      "min": 0.8592,
+      "max": 1.0678
+    },
+    "mbpp_zdict": {
+      "label": "mbpp-clean",
+      "n": 957,
+      "mean": 0.9464,
+      "median": 0.956,
+      "p25": 0.9298,
+      "p75": 0.9741,
+      "min": 0.5789,
+      "max": 1.0388
+    },
+    "hack_concat": {
+      "label": "hack",
+      "n": 34,
+      "mean": 0.6139,
+      "median": 0.6321,
+      "p25": 0.5106,
+      "p75": 0.7184,
+      "min": 0.3714,
+      "max": 0.7922
+    },
+    "ctrl_concat": {
+      "label": "control",
+      "n": 34,
+      "mean": 0.6893,
+      "median": 0.6842,
+      "p25": 0.6522,
+      "p75": 0.726,
+      "min": 0.5469,
+      "max": 0.8333
+    },
+    "hack_lzma": {
+      "label": "hack",
+      "n": 34,
+      "mean": 0.4174,
+      "median": 0.4091,
+      "p25": 0.3421,
+      "p75": 0.4878,
+      "min": 0.2558,
+      "max": 0.6415
+    },
+    "ctrl_lzma": {
+      "label": "control",
+      "n": 34,
+      "mean": 0.4459,
+      "median": 0.4375,
+      "p25": 0.375,
+      "p75": 0.5122,
+      "min": 0.3226,
+      "max": 0.6207
+    },
+    "delta_hack": {
+      "label": "hack",
+      "n": 36,
+      "mean": 0.1287,
+      "median": 0.0864,
+      "p25": -0.0385,
+      "p75": 0.3009,
+      "min": -0.1553,
+      "max": 0.547
+    },
+    "delta_ctrl": {
+      "label": "control",
+      "n": 34,
+      "mean": -0.0003,
+      "median": 0.0,
+      "p25": -0.058,
+      "p75": 0.0423,
+      "min": -0.1918,
+      "max": 0.1875
+    },
+    "auc_zdict": 0.7344,
+    "auc_concat": 0.6414,
+    "auc_lzma": 0.5692,
+    "best_threshold": 1.0127,
+    "best_cal_f1": 0.6917
+  },
+  "held_out": {
+    "n": 15,
+    "threshold": 1.0127,
+    "precision": 0.55,
+    "recall": 0.733,
+    "fpr": 0.6,
+    "hack_zdict": {
+      "label": "hack",
+      "n": 15,
+      "mean": 0.875,
+      "median": 0.9231,
+      "p25": 0.7068,
+      "p75": 1.0217,
+      "min": 0.6,
+      "max": 1.0429
+    },
+    "ctrl_zdict": {
+      "label": "control",
+      "n": 15,
+      "mean": 0.9789,
+      "median": 1.0093,
+      "p25": 0.9333,
+      "p75": 1.0274,
+      "min": 0.8,
+      "max": 1.0488
+    },
+    "auc_zdict": 0.6511
+  }
+}

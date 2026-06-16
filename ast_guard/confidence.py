@@ -51,6 +51,9 @@ def calculate_confidence(
         if kombi_triggered:
             confidence = max(confidence, 85)
 
+        if check_results.get("check_ncc_test_overlap", {}).get("status") == "WARNING":
+            confidence = max(confidence, 25)
+
         return confidence
 
     # --- Pair mode ---

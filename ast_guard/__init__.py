@@ -19,6 +19,7 @@ from ast_guard.telemetry import log_scan, add_feedback as add_telemetry_feedback
 from ast_guard.check_behavioral import risk_score_standalone, is_safe_subprocess
 from ast_guard.check_literal_hijack import check_7_literal_hijack
 from ast_guard.check_new_constant_bypass import check_8_new_constant_bypass
+from ast_guard.check_ncc import check_ncc_standalone
 from ast_guard.confidence import calculate_confidence
 from ast_guard.ir_python import build_ir, metrics_to_stub_ir, empty_ir
 
@@ -500,6 +501,7 @@ def scan_standalone(
     config: dict = None,
     telemetry_enabled: bool = False,
     repo_context: list = None,
+    tests: str | None = None,
 ) -> dict:
     """
     Scan a standalone code block with no original/baseline available.
@@ -724,6 +726,9 @@ def scan_standalone(
 
     check_5 = check_5_extensional_enumeration(orig_ir, gen_ir, cfg)
 
+    # Check NCC: test-literal overlap (standalone-only, requires tests= arg).
+    check_ncc = check_ncc_standalone(code, tests, cfg)
+
     # Check 6: behavioral risk scoring — the primary contextual detector.
     # (risk_score_standalone already called above to inform the literal threshold)
     check_6_severity = _c6_result_raw["severity"]
@@ -756,6 +761,7 @@ def scan_standalone(
         "check_4_import_drift": check_4,
         "check_5_extensional_enumeration": check_5,
         "check_6_behavioral": check_6,
+        "check_ncc_test_overlap": check_ncc,
     }
 
     # Highest severity wins.
