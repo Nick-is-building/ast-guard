@@ -85,7 +85,7 @@ def ncc_raw(code: str, tests: str, level: int = _COMPRESS_LEVEL) -> Optional[flo
     denom = len(zlib.compress(c, level))
     if denom == 0:
         return None
-    obj = zlib.compressobj(level=level, zdict=t)
+    obj = zlib.compressobj(level, zlib.DEFLATED, zlib.MAX_WBITS, zlib.DEF_MEM_LEVEL, zlib.Z_DEFAULT_STRATEGY, t)
     return len(obj.compress(c) + obj.flush()) / denom
 
 
