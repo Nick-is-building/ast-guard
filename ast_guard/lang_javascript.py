@@ -1,5 +1,5 @@
 """
-JavaScript / TypeScript language adapter (v1.5, IR-contract).
+JavaScript / TypeScript language adapter (v1.6, IR-contract).
 
 Parses JS source via tree-sitter-javascript and emits both the standard
 ast-guard metric dict and pre-built DangerousCallEvent entries for the IR.
@@ -7,9 +7,12 @@ ast-guard metric dict and pre-built DangerousCallEvent entries for the IR.
 Requires the optional ``ast-guard[multilang]`` extras.
 
 Enhancement-flag contract (see ir.EnhancementFlags):
-  match_case_enumeration = "partial"  — Flag C: switch/case enumeration is
-    detected only for literal-valued cases. Object-as-lookup-table dispatch
-    (const m = {foo: fn}; m[key]()) is not detected; that requires dataflow.
+  match_case_enumeration = "partial"   — Flag C: switch/case enumeration is
+    detected only for literal-valued cases.
+  dispatch_table = "supported"         — return TABLE[key] / TABLE.get(key) /
+    new Map([[k,v],...]).get(key). All-literal tables keyed by a parameter
+    or a trivial coercion thereof. Excludes computed values (arrow fns, calls),
+    derived keys (x%7, +x), and ``as const`` type assertions (TS).
   All other flags = "not_applicable".
 
 Anonymous function naming — Flag D:
@@ -342,6 +345,450 @@ def _if_condition_has_literal(if_node) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Dispatch-table detection helpers (Check 5 sub-rule, object/Map form)
+# ---------------------------------------------------------------------------
+
+# Trivial scalar coercions accepted as param-keyed access (mirrors Python's _COERCE_CALLS).
+# Excluded (documented): x%7 (arithmetic), +x (unary numeric, changes type semantics).
+_JS_COERCE_CALLS = frozenset({"Number", "String", "Boolean", "parseInt", "parseFloat"})
+
+
+def _js_is_const_expr(node) -> bool:
+    """True when ``node`` is a JS compile-time constant expression.
+
+    Accepted: string/number/true/false/null/undefined literals; arrays and
+    objects whose every element/pair is also constant; unary negation of a
+    constant number.  Rejected: identifier (runtime variable), call,
+    arrow/function expression, template_string with substitutions, spread.
+    """
+    if node is None:
+        return False
+    t = node.type
+    if t in ("string", "number", "true", "false", "null", "undefined"):
+        return True
+    if t == "array":
+        for c in node.named_children:
+            if c.type == "spread_element" or not _js_is_const_expr(c):
+                return False
+        return True
+    if t == "object":
+        return _js_all_literal_object(node)
+    if t == "unary_expression":
+        arg = node.child_by_field_name("argument")
+        if arg is not None:
+            has_neg = any(
+                not ch.is_named and ch.type == "-" for ch in node.children
+            )
+            if has_neg:
+                return _js_is_const_expr(arg)
+    return False
+
+
+def _js_is_const_key(node) -> bool:
+    """True when ``node`` is a constant object-literal key.
+
+    Uncomputed identifier and property_identifier keys in object literals
+    denote their literal string name (e.g. ``{foo: 1}`` → key "foo").
+    computed_property_name (``[expr]``) is excluded.
+    """
+    if node is None:
+        return False
+    t = node.type
+    if t in ("identifier", "property_identifier"):
+        return True
+    return _js_is_const_expr(node)
+
+
+def _js_all_literal_object(node) -> bool:
+    """True when all entries in an object literal are constant key-value pairs.
+
+    Rejects: spread_element, shorthand_property_identifier, method_definition,
+    computed_property_name, or any pair whose key/value is not constant.
+    """
+    for c in node.named_children:
+        if c.type != "pair":
+            return False
+        k = c.child_by_field_name("key")
+        v = c.child_by_field_name("value")
+        if k is None or v is None:
+            return False
+        if not _js_is_const_key(k) or not _js_is_const_expr(v):
+            return False
+    return True
+
+
+def _js_object_table_info(node) -> tuple:
+    """Return (entry_count, all_literal) for an object literal or new Map([...]).
+
+    Returns (0, False) for anything else or an empty/runtime-built structure.
+
+    Limitation: ``TABLE as const`` (TypeScript type assertion wrapping the
+    object) returns (0, False) because the outer node is as_expression.
+    """
+    if node is None:
+        return 0, False
+    t = node.type
+
+    if t == "object":
+        pairs = [c for c in node.named_children if c.type == "pair"]
+        non_pair = [c for c in node.named_children if c.type != "pair"]
+        size = len(pairs)
+        if size == 0:
+            return 0, False
+        all_lit = (not non_pair) and _js_all_literal_object(node)
+        return size, all_lit
+
+    if t == "new_expression":
+        constructor = node.child_by_field_name("constructor")
+        if constructor is None or _node_text(constructor) != "Map":
+            return 0, False
+        args_node = node.child_by_field_name("arguments")
+        if args_node is None:
+            return 0, False
+        outer = next(
+            (c for c in args_node.named_children if c.type == "array"), None
+        )
+        if outer is None:
+            return 0, False
+        entries = [c for c in outer.named_children if c.type == "array"]
+        if not entries:
+            return 0, False
+        all_lit = True
+        for entry in entries:
+            elems = entry.named_children
+            if len(elems) < 2:
+                all_lit = False
+                break
+            if not _js_is_const_expr(elems[0]) or not _js_is_const_expr(elems[1]):
+                all_lit = False
+                break
+        return len(entries), all_lit
+
+    return 0, False
+
+
+def _js_func_params(func_node) -> frozenset:
+    """Flat set of simple formal parameter names for a function node.
+
+    Handles: plain identifiers, parameters with default values (assignment_pattern),
+    rest parameters, single-identifier arrow-function parameters (``x => ...``),
+    and TypeScript required_parameter / optional_parameter / rest_parameter wrappers.
+    Skips destructuring patterns (object_pattern, array_pattern); dispatch hacks
+    use simple scalar parameters, not destructured ones.
+    """
+    params_node = func_node.child_by_field_name("parameters")
+    single_param = False
+    if params_node is None:
+        params_node = func_node.child_by_field_name("parameter")
+        single_param = True
+    if params_node is None:
+        return frozenset()
+
+    names: set = set()
+    if single_param:
+        if params_node.type == "identifier":
+            names.add(_node_text(params_node))
+        return frozenset(names)
+
+    for child in params_node.named_children:
+        if child.type == "identifier":
+            names.add(_node_text(child))
+        elif child.type == "assignment_pattern":
+            left = child.child_by_field_name("left")
+            if left is not None and left.type == "identifier":
+                names.add(_node_text(left))
+        elif child.type in ("rest_pattern", "rest_parameter"):
+            for gc in child.named_children:
+                if gc.type == "identifier":
+                    names.add(_node_text(gc))
+                    break
+        elif child.type in ("required_parameter", "optional_parameter"):
+            # TypeScript typed parameter: get name from 'pattern' field or first identifier
+            name_node = child.child_by_field_name("pattern")
+            if name_node is None:
+                name_node = next(
+                    (gc for gc in child.named_children if gc.type == "identifier"), None
+                )
+            if name_node is not None and name_node.type == "identifier":
+                names.add(_node_text(name_node))
+        # object_pattern / array_pattern: skip (destructured params)
+    return frozenset(names)
+
+
+def _js_is_param_key(key_node, params: frozenset) -> bool:
+    """True when ``key_node`` is or trivially derives from a single function parameter.
+
+    Accepted coercions: Number(x), String(x), Boolean(x), parseInt(x),
+    parseFloat(x), x.toString(), and the single-substitution template literal
+    with only ``${x}`` as content.
+
+    Excluded (documented): x%7 (arithmetic modulo, changes the key domain),
+    +x (unary numeric coercion, domain-changing in JS), x+const (shift).
+    """
+    if key_node is None:
+        return False
+    t = key_node.type
+
+    if t == "identifier" and _node_text(key_node) in params:
+        return True
+
+    if t == "call_expression":
+        func = key_node.child_by_field_name("function")
+        args_node = key_node.child_by_field_name("arguments")
+        named_args = args_node.named_children if args_node is not None else []
+
+        # Number(x) / String(x) / Boolean(x) / parseInt(x) / parseFloat(x)
+        if (func is not None and func.type == "identifier"
+                and _node_text(func) in _JS_COERCE_CALLS
+                and len(named_args) == 1
+                and named_args[0].type == "identifier"
+                and _node_text(named_args[0]) in params):
+            return True
+
+        # x.toString() — member call on the param with no arguments
+        if func is not None and func.type == "member_expression":
+            obj = func.child_by_field_name("object")
+            prop = func.child_by_field_name("property")
+            if (obj is not None and obj.type == "identifier"
+                    and _node_text(obj) in params
+                    and prop is not None
+                    and _node_text(prop) == "toString"
+                    and len(named_args) == 0):
+                return True
+
+    # `${x}` — template_string with exactly one substitution of a single param identifier
+    if t == "template_string":
+        subs = [c for c in key_node.named_children if c.type == "template_substitution"]
+        non_subs = [c for c in key_node.named_children if c.type != "template_substitution"]
+        if len(subs) == 1 and not non_subs:
+            sub_children = subs[0].named_children
+            if (len(sub_children) == 1
+                    and sub_children[0].type == "identifier"
+                    and _node_text(sub_children[0]) in params):
+                return True
+
+    return False
+
+
+def _js_collect_module_tables(root) -> dict:
+    """Collect top-level {name: (size, all_literal)} object/Map bindings.
+
+    Handles both direct declarations and ``export const TABLE = ...`` forms.
+    """
+    tables: dict = {}
+    for node in root.named_children:
+        decl = None
+        if node.type in ("lexical_declaration", "variable_declaration"):
+            decl = node
+        elif node.type == "export_statement":
+            decl = node.child_by_field_name("declaration")
+        if decl is not None and decl.type in ("lexical_declaration", "variable_declaration"):
+            for child in decl.named_children:
+                if child.type == "variable_declarator":
+                    name_node = child.child_by_field_name("name")
+                    value_node = child.child_by_field_name("value")
+                    if (name_node is not None and name_node.type == "identifier"
+                            and value_node is not None):
+                        sz, al = _js_object_table_info(value_node)
+                        if sz > 0:
+                            name = _node_text(name_node)
+                            if name not in tables:
+                                tables[name] = (sz, al)
+    return tables
+
+
+def _js_collect_local_tables(func_node) -> dict:
+    """Collect {name: (size, all_literal)} for object/Map bindings in one function scope.
+
+    BFS over the function body; does not descend into nested function bodies so
+    each function's local scope is self-contained.
+    """
+    body = func_node.child_by_field_name("body")
+    if body is None or body.type != "statement_block":
+        return {}
+
+    tables: dict = {}
+    queue = list(body.named_children)
+    while queue:
+        node = queue.pop(0)
+        if node.type in _FUNCTION_NODES:
+            continue
+        if node.type in ("lexical_declaration", "variable_declaration"):
+            for child in node.named_children:
+                if child.type == "variable_declarator":
+                    name_node = child.child_by_field_name("name")
+                    value_node = child.child_by_field_name("value")
+                    if (name_node is not None and name_node.type == "identifier"
+                            and value_node is not None):
+                        sz, al = _js_object_table_info(value_node)
+                        if sz > 0:
+                            name = _node_text(name_node)
+                            if name not in tables:
+                                tables[name] = (sz, al)
+        for c in node.named_children:
+            queue.append(c)
+    return tables
+
+
+def _js_check_dispatch_return(ret_value, params: frozenset,
+                              local_tables: dict, module_tables: dict) -> tuple:
+    """Check if ``ret_value`` is a dispatch lookup keyed by a function parameter.
+
+    Detects:
+      TABLE[param]              — subscript_expression on object or Map variable
+      TABLE?.[param]            — optional-chain subscript (same field layout)
+      TABLE[param] ?? default   — nullish-coalesced subscript
+      TABLE.get(param)          — Map/object .get() call
+      TABLE.get(param, default) — .get() with default
+
+    Returns (table_size, all_literal) or (0, False) when the pattern is absent.
+    """
+    if ret_value is None:
+        return 0, False
+    t = ret_value.type
+
+    # Unwrap parenthesized expressions: (TABLE[key]) or ({k:v,...}[key])
+    if t == "parenthesized_expression":
+        named = ret_value.named_children
+        if named:
+            ret_value = named[0]
+            t = ret_value.type
+
+    # Unwrap TABLE[key] ?? default → examine the left operand
+    if t == "binary_expression":
+        op = next((c.type for c in ret_value.children if not c.is_named), None)
+        if op == "??":
+            named = ret_value.named_children
+            if named:
+                ret_value = named[0]
+                t = ret_value.type
+        else:
+            return 0, False
+
+    # TABLE[key] or TABLE?.[key] → subscript_expression (optional_chain is an
+    # extra unnamed child; object and index fields are present regardless)
+    if t == "subscript_expression":
+        obj = ret_value.child_by_field_name("object")
+        index = ret_value.child_by_field_name("index")
+        if obj is None or index is None:
+            return 0, False
+        if not _js_is_param_key(index, params):
+            return 0, False
+        if obj.type == "object":
+            return _js_object_table_info(obj)
+        if obj.type == "identifier":
+            info = local_tables.get(_node_text(obj)) or module_tables.get(_node_text(obj))
+            if info is not None:
+                return info
+        return 0, False
+
+    # TABLE.get(key) or TABLE.get(key, default)
+    if t == "call_expression":
+        func = ret_value.child_by_field_name("function")
+        args_node = ret_value.child_by_field_name("arguments")
+        if func is None or func.type != "member_expression":
+            return 0, False
+        prop = func.child_by_field_name("property")
+        if prop is None or _node_text(prop) != "get":
+            return 0, False
+        if args_node is None:
+            return 0, False
+        named_args = args_node.named_children
+        if not named_args or not _js_is_param_key(named_args[0], params):
+            return 0, False
+        obj = func.child_by_field_name("object")
+        if obj is None or obj.type != "identifier":
+            return 0, False
+        info = local_tables.get(_node_text(obj)) or module_tables.get(_node_text(obj))
+        if info is not None:
+            return info
+
+    return 0, False
+
+
+def _js_scan_dispatch_in_func(func_node, module_tables: dict) -> tuple:
+    """Scan one function for the largest all-literal dispatch return pattern.
+
+    Mirrors Python's _scan_dispatch_in_func: BFS over the function body, skips
+    nested function bodies, tracks local table bindings, and checks every return
+    value.  Returns (max_table_size, all_literal).
+    """
+    params = _js_func_params(func_node)
+    if not params:
+        return 0, False
+
+    local_tables = _js_collect_local_tables(func_node)
+    body_node = func_node.child_by_field_name("body")
+    if body_node is None:
+        return 0, False
+
+    returns: list = []
+    if body_node.type != "statement_block":
+        # Expression-body arrow function: ``(x) => TABLE[x]``
+        returns.append(body_node)
+    else:
+        queue = list(body_node.named_children)
+        while queue:
+            node = queue.pop(0)
+            if node.type in _FUNCTION_NODES:
+                continue
+            if node.type == "return_statement":
+                named = node.named_children
+                if named:
+                    returns.append(named[0])
+            for c in node.named_children:
+                queue.append(c)
+
+    max_size = 0
+    all_lit = False
+    for ret_value in returns:
+        sz, al = _js_check_dispatch_return(ret_value, params, local_tables, module_tables)
+        if sz > max_size:
+            max_size = sz
+            all_lit = al
+    return max_size, all_lit
+
+
+def _collect_dispatch_analysis(root) -> list:
+    """Per-function dispatch-table detection. Mirrors Python's analyze_dispatch_tables.
+
+    Returns list of {"name": str, "dispatch_table_size": int, "dispatch_all_literal": bool}.
+    Names are bare (unqualified) so _build_per_function can merge them by last
+    component. Collision between same-named methods in different classes is
+    accepted (same limitation as the Python path — see ir_python._build_per_function).
+    """
+    module_tables = _js_collect_module_tables(root)
+    results: list = []
+
+    def _visit(node, prefix: str) -> None:
+        if node.type in _FUNCTION_NODES:
+            name = _function_name(node)
+            qname = f"{prefix}.{name}" if prefix else name
+            size, all_lit = _js_scan_dispatch_in_func(node, module_tables)
+            results.append({
+                "name": name,  # bare name for _build_per_function merge
+                "dispatch_table_size": size,
+                "dispatch_all_literal": all_lit,
+            })
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for c in body.children:
+                    _visit(c, qname)
+        elif node.type == "class_declaration":
+            name_node = node.child_by_field_name("name")
+            cname = _node_text(name_node) if name_node is not None else "<anon>"
+            child_prefix = f"{prefix}.{cname}" if prefix else cname
+            for c in node.children:
+                _visit(c, child_prefix)
+        else:
+            for c in node.children:
+                _visit(c, prefix)
+
+    _visit(root, "")
+    return results
+
+
 def _collect_enumeration_analysis(root) -> list:
     """
     Per-function enumeration pattern statistics for Check 5.
@@ -491,6 +938,7 @@ def extract_metrics(code: str) -> dict:
     call_list, import_list = _extract_calls_and_imports(root)
     function_complexities = _collect_function_complexities(root)
     enumeration_analysis = _collect_enumeration_analysis(root)
+    dispatch_analysis = _collect_dispatch_analysis(root)
     non_trivial_binop_count = _count_non_trivial_binops(root)
 
     dangerous_calls = sorted({
@@ -525,6 +973,6 @@ def extract_metrics(code: str) -> dict:
         "dangerous_imports": dangerous_imports,
         "non_trivial_binop_count": non_trivial_binop_count,
         "dangerous_call_events": dangerous_call_events,
-        "dispatch_analysis": [],  # not_applicable for JS; planned for next block
+        "dispatch_analysis": dispatch_analysis,
         "language": "javascript",
     }

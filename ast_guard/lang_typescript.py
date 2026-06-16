@@ -26,6 +26,8 @@ therefore skipped during function complexity collection.
 
 Enhancement-flag contract (see ir.EnhancementFlags):
   match_case_enumeration = "partial"   -- Flag C: same as JS
+  dispatch_table         = "supported" -- same as JS; ``as const`` type
+    assertions wrapping the object return (0, False) and are not detected.
   docstring_exclusion     = "partial"  -- JSDoc appears as comment nodes, not
     string literals; this flag is informational rather than active filtering.
   All other flags = "not_applicable".
@@ -46,12 +48,15 @@ from ast_guard.lang_javascript import (
     _LOOP_NODES,
     _build_dangerous_call_events,
     _calculate_complexity,
+    _collect_dispatch_analysis,
     _count_ifs,
     _count_non_trivial_binops,
     _extract_calls_and_imports,
     _function_name,
     _if_condition_has_literal,
     _is_js_literal,
+    _js_collect_module_tables,
+    _js_scan_dispatch_in_func,
     _loop_depth,
     _node_text,
     _resolve_callee,
@@ -232,6 +237,43 @@ def _collect_enumeration_analysis_ts(root) -> list:
     return result
 
 
+def _collect_dispatch_analysis_ts(root) -> list:
+    """Per-function dispatch-table detection for TypeScript.
+
+    Same logic as _collect_dispatch_analysis but handles abstract_class_declaration
+    alongside class_declaration (both are in _TS_CLASS_NODES).
+    """
+    module_tables = _js_collect_module_tables(root)
+    results: list = []
+
+    def _visit(node, prefix: str) -> None:
+        if node.type in _FUNCTION_NODES:
+            name = _function_name(node)
+            qname = f"{prefix}.{name}" if prefix else name
+            size, all_lit = _js_scan_dispatch_in_func(node, module_tables)
+            results.append({
+                "name": name,
+                "dispatch_table_size": size,
+                "dispatch_all_literal": all_lit,
+            })
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for c in body.children:
+                    _visit(c, qname)
+        elif node.type in _TS_CLASS_NODES:
+            name_node = node.child_by_field_name("name")
+            cname = _node_text(name_node) if name_node is not None else "<anon>"
+            child_prefix = f"{prefix}.{cname}" if prefix else cname
+            for c in node.children:
+                _visit(c, child_prefix)
+        else:
+            for c in node.children:
+                _visit(c, prefix)
+
+    _visit(root, "")
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -256,6 +298,7 @@ def extract_metrics(code: str) -> dict:
     call_list, import_list = _extract_calls_and_imports(root)
     function_complexities = _collect_function_complexities_ts(root)
     enumeration_analysis = _collect_enumeration_analysis_ts(root)
+    dispatch_analysis = _collect_dispatch_analysis_ts(root)
     non_trivial_binop_count = _count_non_trivial_binops(root)
 
     dangerous_calls = sorted({
@@ -287,6 +330,6 @@ def extract_metrics(code: str) -> dict:
         "dangerous_imports": dangerous_imports,
         "non_trivial_binop_count": non_trivial_binop_count,
         "dangerous_call_events": dangerous_call_events,
-        "dispatch_analysis": [],  # not_applicable for TS; planned for next block
+        "dispatch_analysis": dispatch_analysis,
         "language": "typescript",
     }

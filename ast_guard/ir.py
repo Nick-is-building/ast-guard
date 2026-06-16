@@ -35,6 +35,7 @@ class EnhancementFlags:
     anti_obfuscation_deep: str = "not_applicable"
     taint_analysis: str = "not_applicable"
     match_case_enumeration: str = "not_applicable"
+    dispatch_table: str = "not_applicable"
     dataflow_independence: str = "not_applicable"
     intent_mismatch: str = "not_applicable"
     normalized_tree: str = "not_applicable"  # reserved for TED

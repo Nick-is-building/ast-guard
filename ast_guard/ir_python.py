@@ -29,21 +29,24 @@ _PYTHON_ENHANCEMENTS = EnhancementFlags(
     anti_obfuscation_deep="supported",
     taint_analysis="supported",
     match_case_enumeration="supported",
+    dispatch_table="supported",
     dataflow_independence="supported",
     intent_mismatch="supported",
     normalized_tree="not_applicable",  # reserved for future TED work
 )
 
-# Flag C: switch/case enumeration is partial — only literal-valued cases are
-# detected. Object-as-lookup-table dispatch requires dataflow (not_applicable).
+# Flag C: switch/case enumeration is partial (literal-valued cases only).
+# Flag dispatch_table: return TABLE[key] / TABLE.get(key) detection now supported.
 _JS_ENHANCEMENTS = EnhancementFlags(
     match_case_enumeration="partial",
+    dispatch_table="supported",
 )
 
 # TS: same as JS + docstring_exclusion=partial (JSDoc appears as comment nodes,
 # not string literals; flag is informational rather than actively filtered).
 _TS_ENHANCEMENTS = EnhancementFlags(
     match_case_enumeration="partial",
+    dispatch_table="supported",
     docstring_exclusion="partial",
 )
 
