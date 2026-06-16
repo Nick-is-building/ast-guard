@@ -194,79 +194,78 @@ def _body_has_bypass_return(
 # Public check
 # ---------------------------------------------------------------------------
 
-def check_8_new_constant_bypass(
-    orig_metrics: dict,
-    gen_metrics: dict,
-    orig_tree: ast.Module,
-    gen_tree: ast.Module,
-    config: dict,
-) -> dict:
+def check_8_new_constant_bypass(orig_ir, gen_ir, config: dict) -> dict:
     """
     Check 8 — New Constant Bypass (pair mode, Type A).
 
+    Reads pre-computed bypass_events from gen_ir.per_function and compares
+    candidate comparators against orig_ir.scalar_set to identify new-specific
+    constants.  Requires enhancements.dataflow_independence == "supported".
+
     Args:
-        orig_metrics: Metrics dict for the original code.
-        gen_metrics:  Metrics dict for the generated code.
-        orig_tree:    Parsed AST of the original code.
-        gen_tree:     Parsed AST of the generated code.
-        config:       Effective configuration dict.
+        orig_ir: CodeIR for the original code (scalar_set + per_function mccabe).
+        gen_ir:  CodeIR for the generated code (bypass_events per function).
+        config:  Effective configuration dict.
 
     Returns:
         {"status": "WARNING"|"CLEAN", "findings": [...]}
     """
+    if gen_ir.enhancements.dataflow_independence != "supported":
+        return {"status": "CLEAN", "findings": []}
+
     findings: list[dict] = []
-    orig_complexities: dict = orig_metrics.get("function_complexities", {}) or {}
-    orig_scalars: frozenset = _collect_tree_scalars(orig_tree)
+    orig_scalars: frozenset = orig_ir.scalar_set
 
-    for qname, func in _walk_functions_with_qnames(gen_tree):
-        if func.name.startswith("__") and func.name.endswith("__"):
+    # Build orig-side mccabe lookup by identity.
+    orig_mccabe: dict = {f.identity: f.mccabe for f in (orig_ir.per_function or [])}
+
+    for func_ir in (gen_ir.per_function or []):
+        bare_name = func_ir.identity.rsplit(".", 1)[-1]
+
+        if bare_name.startswith("__") and bare_name.endswith("__"):
+            continue
+        if not func_ir.param_names:
             continue
 
-        params = _function_params(func)
-        if not params:
-            continue
-
-        # Pair-mode guard.
-        orig_complexity = orig_complexities.get(qname, 0)
+        # Pair-mode guard: orig must exist with complexity >= floor.
+        orig_complexity = orig_mccabe.get(func_ir.identity, 0)
         if orig_complexity < _ORIG_COMPLEXITY_FLOOR:
             continue
 
-        tainted = _compute_tainted_names(func, params)
+        if not func_ir.bypass_events:
+            continue
 
-        # Examine only top-level if-statements in the function body.
-        # Skip a leading docstring if present.
-        body = func.body
-        if (body
-                and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, ast.Constant)
-                and isinstance(body[0].value.value, str)):
-            body = body[1:]
+        for event_line, event_scalars, event_containers in func_ir.bypass_events:
+            found_new_specific = False
 
-        seen_lines: set[int] = set()  # deduplicate findings per line
-        for stmt in body:
-            if not isinstance(stmt, ast.If):
+            # Check scalar comparators.
+            for scalar in event_scalars:
+                if scalar not in orig_scalars and scalar not in _TRIVIAL_SCALARS:
+                    found_new_specific = True
+                    break
+
+            # Check container comparators (List/Tuple/Set on non-tainted side).
+            if not found_new_specific:
+                for orig_len, elt_vals in event_containers:
+                    if orig_len >= 2:
+                        new_count = sum(1 for e in elt_vals if e not in orig_scalars)
+                        if new_count >= 2:
+                            found_new_specific = True
+                            break
+                    elif orig_len == 1 and elt_vals:
+                        elt = elt_vals[0]
+                        if elt not in orig_scalars and elt not in _TRIVIAL_SCALARS:
+                            found_new_specific = True
+                            break
+
+            if not found_new_specific:
                 continue
-
-            # Condition must compare a tainted expression against a new specific constant.
-            if not _condition_has_new_specific_vs_tainted(
-                stmt.test, tainted, orig_scalars
-            ):
-                continue
-
-            # The if-branch body must contain an input-independent return.
-            if not _body_has_bypass_return(stmt.body, tainted):
-                continue
-
-            line = getattr(stmt, "lineno", None)
-            if line in seen_lines:
-                continue
-            seen_lines.add(line)
 
             findings.append({
                 "severity": "WARNING",
-                "line": line,
+                "line": event_line,
                 "explanation": (
-                    f"Function '{func.name}' contains an if-branch at line {line} "
+                    f"Function '{bare_name}' contains an if-branch at line {event_line} "
                     f"that compares against a constant absent from the original code "
                     f"and returns a value without using the algorithm's normal "
                     f"computation. This is a structural marker of test-case hardcoding "

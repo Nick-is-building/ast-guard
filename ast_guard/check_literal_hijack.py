@@ -294,111 +294,79 @@ def _is_pure_compare_return_hack(
     return has_suspicious
 
 
-def check_7_literal_hijack(
-    orig_metrics: dict,
-    gen_metrics: dict,
-    orig_tree: ast.Module,
-    gen_tree: ast.Module,
-    config: dict,
-) -> dict:
+def check_7_literal_hijack(orig_ir, gen_ir, config: dict) -> dict:
     """
     Check 7 — Literal Hijack (pair mode).
 
     Fires when a generated function returns only literal values with no
     dependency on its parameters, while the original function had genuine
-    computational complexity (McCabe >= 2).
+    computational complexity.
+
+    Reads pre-computed dataflow_independence fields from orig_ir and gen_ir.
+    Requires enhancements.dataflow_independence == "supported"; returns CLEAN
+    for languages where it is "not_applicable".
 
     Args:
-        orig_metrics: Metrics dict from extract_metrics(original_code).
-        gen_metrics:  Metrics dict from extract_metrics(generated_code).
-        orig_tree:    Parsed AST of the original code.
-        gen_tree:     Parsed AST of the generated code.
-        config:       Effective config dict (thresholds and settings).
+        orig_ir: CodeIR for the original code (provides orig per-function data).
+        gen_ir:  CodeIR for the generated code (provides per-function IR fields).
+        config:  Effective config dict.
 
     Returns:
         {"status": "WARNING"|"CLEAN", "findings": [...]}
     """
+    if gen_ir.enhancements.dataflow_independence != "supported":
+        return {"status": "CLEAN", "findings": []}
+
     findings: list[dict] = []
-    orig_complexities: dict = orig_metrics.get("function_complexities", {}) or {}
-    orig_stmt_counts: dict = _orig_body_stmt_counts(orig_tree)
 
-    for qname, func in _walk_functions_with_qnames(gen_tree):
-        # Dunder methods (__init__, __len__, …) are thin wrappers by convention.
-        if func.name.startswith("__") and func.name.endswith("__"):
+    # Build orig-side lookup by identity.
+    orig_by_id: dict = {f.identity: f for f in (orig_ir.per_function or [])}
+
+    for func_ir in (gen_ir.per_function or []):
+        bare_name = func_ir.identity.rsplit(".", 1)[-1]
+
+        # Dunder methods are thin wrappers by convention.
+        if bare_name.startswith("__") and bare_name.endswith("__"):
             continue
 
-        params = _function_params(func)
-        if not params:
-            # Nullary functions are constant providers by design — not a hack.
+        # Nullary functions are constant providers by design.
+        if not func_ir.param_names:
             continue
 
-        returns = _collect_returns(func)
-        if not returns:
-            continue
-
-        tainted = _compute_tainted_names(func, params)
-
-        all_independent = True
-        has_literal_return = False
-
-        for ret in returns:
-            if ret.value is None:
-                # bare `return` → input-independent None; not a literal signal
-                continue
-            refs = set(_name_references(ret.value))
-            if refs & tainted:
-                all_independent = False
-                break
-            # Direct literal: return [1, 2, 3, 5, 7]
-            if _is_pure_literal(ret.value):
-                has_literal_return = True
-            # Assign variant: result = [1,2,3]; return result
-            elif isinstance(ret.value, ast.Name):
-                if _is_literal_assigned(func, ret.value.id):
-                    has_literal_return = True
-
-        # Sub-check: compare-return variant — `return param == [1,2,3,4]` or
-        # `return n == 25`.  The return DOES reference a tainted name (so
-        # all_independent is False and the path above would skip it), but the
-        # tainted reference is only a bare parameter being compared against a
-        # specific constant — not a real computation.
-        is_compare_return_hack = (
-            not (all_independent and has_literal_return)
-            and _is_pure_compare_return_hack(returns, tainted)
+        # Core signal: all returns independent of params + at least one literal,
+        # OR the compare-return hack variant.
+        fires = (
+            (func_ir.all_returns_input_independent and func_ir.has_pure_literal_return)
+            or func_ir.is_compare_return_hack
         )
-
-        if not (all_independent and has_literal_return) and not is_compare_return_hack:
+        if not fires:
             continue
 
-        # Precision guard: if any if/while/for condition references a tainted
-        # name, the function IS doing input-dependent work (branching on params)
-        # and must not be flagged.  This separates "return literal regardless of
-        # inputs" (Type C hack) from "return True/False based on param comparison"
-        # (legitimate dispatch or Type A pattern — caught by the coming Check 8).
-        if _has_tainted_control_flow(func, tainted):
+        # Precision guard: if any branch/loop condition uses a param, the function
+        # IS doing input-dependent branching — not a literal hijack.
+        if func_ir.has_tainted_control_flow:
             continue
 
         # Pair-mode precision guard: original must have been non-trivial.
-        # Condition: McCabe >= 2 (has branches) OR body had >= 2 statements
-        # (multi-step linear algorithm).  Functions absent from the original
-        # (new additions) get complexity 0 and stmt_count 0 → both fail → skip.
-        orig_complexity = orig_complexities.get(qname, 0)
-        orig_stmts = orig_stmt_counts.get(qname, 0)
+        orig_func = orig_by_id.get(func_ir.identity)
+        orig_complexity = orig_func.mccabe if orig_func else 0
+        orig_stmts = orig_func.body_stmt_count if orig_func else 0
         if orig_complexity < _ORIG_COMPLEXITY_FLOOR and orig_stmts < _ORIG_STMT_FLOOR:
             continue
 
-        if is_compare_return_hack:
+        params_display = list(func_ir.param_names)
+        if func_ir.is_compare_return_hack:
             explanation = (
-                f"Function '{func.name}' reduces its entire body to a direct "
-                f"comparison of parameter(s) {sorted(params)} against a specific "
+                f"Function '{bare_name}' reduces its entire body to a direct "
+                f"comparison of parameter(s) {params_display} against a specific "
                 f"constant, with no algorithmic computation (original complexity: "
                 f"{orig_complexity}, {orig_stmts} body statement(s)). This is a "
                 f"structural marker of a solution hardcoded for the known test input."
             )
         else:
             explanation = (
-                f"Function '{func.name}' returns only literal values with no "
-                f"dependency on its parameters {sorted(params)}, while the original "
+                f"Function '{bare_name}' returns only literal values with no "
+                f"dependency on its parameters {params_display}, while the original "
                 f"had complexity {orig_complexity} and {orig_stmts} body statement(s). "
                 f"This is a structural marker of a hardcoded solution that ignores "
                 f"its inputs."
@@ -406,7 +374,7 @@ def check_7_literal_hijack(
 
         findings.append({
             "severity": "WARNING",
-            "line": getattr(func, "lineno", None),
+            "line": func_ir.line,
             "explanation": explanation,
         })
 

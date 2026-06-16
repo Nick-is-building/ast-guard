@@ -13,6 +13,7 @@ import pytest
 from ast_guard.analyzer import extract_metrics
 from ast_guard.check_literal_hijack import check_7_literal_hijack
 from ast_guard.config import load_effective_config
+from ast_guard.ir_python import build_ir
 
 
 # ---------------------------------------------------------------------------
@@ -24,8 +25,10 @@ def _run(orig_code: str, gen_code: str) -> dict:
     gen_metrics = extract_metrics(gen_code)
     orig_tree = ast.parse(orig_code)
     gen_tree = ast.parse(gen_code)
+    orig_ir = build_ir(orig_code, orig_tree, orig_metrics)
+    gen_ir = build_ir(gen_code, gen_tree, gen_metrics)
     config = load_effective_config()
-    return check_7_literal_hijack(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
+    return check_7_literal_hijack(orig_ir, gen_ir, config)
 
 
 # ---------------------------------------------------------------------------

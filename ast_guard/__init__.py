@@ -144,14 +144,14 @@ def scan(original_code: str, generated_code: str, mode: str = None, config_overr
     orig_ir = build_ir(original_code, orig_tree, orig_metrics)
     gen_ir = build_ir(generated_code, gen_tree, gen_metrics)
 
-    # 5. Run Checks (Checks 1-5 via IR; Checks 7-8 still via metrics + AST)
+    # 5. Run Checks (all via IR)
     check_1 = check_1_hardcoding(orig_ir, gen_ir, config)
     check_2 = check_2_complexity_collapse(orig_ir, gen_ir, config)
     check_3 = check_3_forbidden_calls(orig_ir, gen_ir, gen_tree, config)
     check_4 = check_4_import_drift(orig_ir, gen_ir, config)
     check_5 = check_5_extensional_enumeration(orig_ir, gen_ir, config)
-    check_7 = check_7_literal_hijack(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
-    check_8 = check_8_new_constant_bypass(orig_metrics, gen_metrics, orig_tree, gen_tree, config)
+    check_7 = check_7_literal_hijack(orig_ir, gen_ir, config)
+    check_8 = check_8_new_constant_bypass(orig_ir, gen_ir, config)
 
     # 5. Handle Flag Override logic
     # Allowlist override for Check 2 is blocked when Check 1, Check 3, or

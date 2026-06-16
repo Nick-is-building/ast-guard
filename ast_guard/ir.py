@@ -66,6 +66,51 @@ class FunctionIR:
     dispatch_table_size: int = 0
     dispatch_all_literal: bool = False  # all keys AND values are ast.Constant
 
+    # --- dataflow_independence fields (Checks 7 & 8) ---
+    # Populated by the Python adapter; default False/0/empty is safe neutral.
+    # Only meaningful when enhancements.dataflow_independence == "supported".
+
+    # Check 7: input-independence classification
+    all_returns_input_independent: bool = False
+    # All non-None return values contain no Name-reference to any param-tainted
+    # variable.  Used jointly with has_pure_literal_return for Type-C detection.
+
+    has_pure_literal_return: bool = False
+    # At least one return value is a pure literal (Constant, or container-of-
+    # constants recursively).  Jointly with all_returns_input_independent → Type-C.
+
+    is_compare_return_hack: bool = False
+    # Every non-bare return is "param == <specific_literal>".  Captures the
+    # compare-return Type-C variant where the tainted name DOES appear but only
+    # in a direct equality check, not real computation.
+
+    has_tainted_control_flow: bool = False
+    # Any if/while/for/IfExp condition (or try/except throw-determining position)
+    # references a param-tainted name.  When True, Check 7 suppresses the finding:
+    # the function does real input-dependent branching, not just literal returns.
+
+    body_stmt_count: int = 0
+    # Non-docstring top-level statement count (both orig and gen populated).
+    # Orig-side precision guard for Check 7: mccabe==1 but >= 2 stmts means the
+    # original was a multi-step linear algorithm, not a trivial single-expression stub.
+
+    param_names: tuple = field(default_factory=tuple)
+    # Sorted tuple of parameter name strings.  Stored so Check 7 explanation text
+    # can include "no dependency on its parameters ['n', 'x']" without an AST.
+
+    # Check 8: new-constant-bypass candidate events
+    bypass_events: tuple = field(default_factory=tuple)
+    # One entry per qualifying top-level if-branch — a branch where (a) the
+    # condition compares a param-tainted expression against any pure literal, AND
+    # (b) the branch body contains at least one input-independent return.
+    # Each entry is a 3-tuple: (line, scalars, containers) where
+    #   line:       Optional[int] — source line of the if-statement
+    #   scalars:    frozenset — scalar comparator values from the condition
+    #   containers: tuple of (original_len: int, element_values: tuple) for each
+    #               container (List/Tuple/Set) comparator found in the condition.
+    # Check 8 diffs scalars/containers against orig_ir.scalar_set to identify
+    # "new specific" constants that weren't present in the original code.
+
 
 @dataclass
 class DangerousCallEvent:
@@ -129,6 +174,11 @@ class CodeIR:
 
     # Pre-flagged dangerous call patterns (portable core of Check 3)
     dangerous_call_events: list = field(default_factory=list)  # list[DangerousCallEvent]
+
+    # All hashable scalar constant values in this code block.
+    # Check 8 uses orig_ir.scalar_set to determine which comparators are "new"
+    # (absent from the original code).  Populated by the Python adapter.
+    scalar_set: frozenset = field(default_factory=frozenset)
 
     # Enhancement support matrix
     enhancements: EnhancementFlags = field(default_factory=EnhancementFlags)
