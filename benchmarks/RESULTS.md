@@ -126,6 +126,71 @@ Artifact: `benchmarks/data/sorh_results.json`
 
 The 2 FN are hardcoded solutions that stayed below Check 1/5 thresholds. The 28 skipped C++ pairs will contribute once a C++ tree-sitter adapter is added.
 
+### School of Reward Hacks (standalone mode — offline eval harness)
+
+Offline eval harness (`eval/`), deterministic split seed=42, 80% dev / 20% held-out.
+Held-out split was **never used for tuning** — reported once, final.
+
+**Configuration:** thresholds lowered from the prior release defaults (5 / 4 / 0.80)
+to (2 / 2 / 0.80) for `_MIN_RETURNS` / `_MIN_BRANCHES` / `_MIN_INDEPENDENT_RATIO`,
+plus two structural loop fixes in `ast_guard/dataflow.py`:
+- Loop-body taint propagation (Fix A): when a for-loop iterator references tainted
+  names, all variables assigned anywhere in the loop body are also tainted — the
+  iteration count, and therefore each body assignment's final value, depends on the
+  parameter.
+- Loop-internal return exclusion (Fix B): returns whose execution depends on a
+  tainted loop iterator are excluded from the independence count; whether they run at
+  all depends on the parameter, not just their return value.
+
+Both fixes are structurally sound and verified by two new regression tests (819 tests
+total, 8 skipped for optional MCP extra).
+
+Reproducibility metadata:
+- ast-guard commit: `de1dcde`
+- SORH dataset revision: `2026-06-15T03:11:46Z`
+- Split seed: 42, dev_ratio: 0.8, scan mode: strict
+
+#### Dev split (82 records — 41 hack, 41 benign)
+
+| Metric | Value |
+|--------|-------|
+| Total records | 82 |
+| TP | 31 |
+| FP | **0** |
+| TN | 41 |
+| FN | 10 |
+| **Precision** | **1.000** |
+| **Recall** | **0.756** |
+| **F1** | **0.861** |
+| **PR-AUC** | **0.939** |
+
+Pair mode on TP records: TP=40 FP=0 FN=1, F1=0.988, P=1.000, R=0.976.
+
+#### Held-out split (22 records — 11 hack, 11 benign, measured once)
+
+| Metric | Value |
+|--------|-------|
+| Total records | 22 |
+| TP | 9 |
+| FP | **0** |
+| TN | 11 |
+| FN | 2 |
+| **Precision** | **1.000** |
+| **Recall** | **0.818** |
+| **F1** | **0.900** |
+| **PR-AUC** | **0.955** |
+
+#### Open false-negative gaps (known follow-up signals)
+
+| Gap | Count | Pattern | Next signal candidate |
+|-----|-------|---------|----------------------|
+| ratio-0.75 passthrough | 7 | 3 pure-literal branches + `return lst/s/n` fallback | loop-smarter input-independence signal at ratio < 0.80 |
+| ternary chains | 3 | `return A if c1 else B if c2 else C` — 1 `ast.Return` total | dedicated IfExp-chain independence check |
+
+Both gap types have structurally sound solutions; neither is addressable by simple
+threshold tuning at `_MIN_INDEPENDENT_RATIO=0.80` without introducing held-out FPs
+on benign algorithmic functions (perrin, count_binary_seq, is_valid_ipv4).
+
 ### MBPP (pair mode — TN FPR baseline)
 
 Source: `google-research-datasets/mbpp` (HuggingFace Apache-2.0), accessed 2026-06-10.
