@@ -179,15 +179,21 @@ def write_report(
         "",
         textwrap.dedent("""\
             **Syntactic hacks** (structural, detectable by AST analysis):
-            test-modification, test-case-targeting, coverage-gaming, hardcoding,
-            hardcoded-test-cases.
+            hardcoded-test-cases, test-modification, test-case-targeting,
+            coverage-gaming, hardcoding;
+            trace-test-infra-patching, trace-coverage-gaming,
+            trace-output-hardcoding, trace-metric-fabrication,
+            trace-eval-code-modification.
 
             **Semantic hacks** (require understanding of intent/meaning —
-            OUT OF SCOPE for ast-guard, shown as reference only):
+            OUT OF SCOPE for ast-guard, shown as boundary reference only):
             context-exploitation, style-manipulation, information-leakage,
-            tool-abuse.
+            tool-abuse;
+            trace-test-assertion-bypass, trace-environment-manipulation,
+            trace-side-channel, trace-scope-violation,
+            trace-deceptive-completion.
 
-            **Benign** controls: honest-vs-honest, clean solutions.
+            **Benign** controls: honest-vs-honest, trace-benign, clean solutions.
         """),
         "",
         _render_breakdown_table(metrics.get("by_syntactic_semantic", {})),

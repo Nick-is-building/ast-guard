@@ -2,7 +2,7 @@
 
 ## Abstract
 
-ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, JavaScript, and TypeScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across five datasets: the built-in TRACE-aligned suite (33 hand-written samples), School of Reward Hacks (104 labeled Python pairs), MBPP (974 TN pairs), Countdown-Code (15,894 samples), and the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts). In pair mode on real external data, ast-guard achieves **98.0% F1 on School of Reward Hacks** (100% precision, 96.2% recall, 0.0% FPR) and **0.1% FPR on MBPP** identity pairs. On the built-in hand-written suite, it achieves 95.7% F1 with 100% precision. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. ast-guard v2.3.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
+ast-guard is a deterministic, pre-execution static analyzer for detecting reward hacking in LLM-generated code. It operates on Python (native AST), Bash, JavaScript, and TypeScript (tree-sitter) without external dependencies in its core, producing results in under 50ms per scan. This document reports evaluation results across six datasets: the built-in TRACE-aligned suite (33 hand-written samples), School of Reward Hacks (104 labeled Python pairs), MBPP (974 TN pairs), Countdown-Code (15,894 samples), the METR MALT dataset (81,515 scannable code blocks from 7,179 agent transcripts), and the external PatronusAI TRACE agentic-trajectory dataset (517 trajectories). In pair mode on real external data, ast-guard achieves **98.0% F1 on School of Reward Hacks** (100% precision, 96.2% recall, 0.0% FPR) and **0.1% FPR on MBPP** identity pairs. On the built-in hand-written suite, it achieves 95.7% F1 with 100% precision. In standalone mode on MALT, it achieves 95.0% true-negative rate while detecting 34.5% of bypass\_constraints and 46.9% of hardcoded\_solution samples. On the external TRACE dataset, standalone scan achieves **21.3% recall on in-scope structural categories** at 30.1% FPR — establishing the boundary between the static-AST primitive and the agentic-delta regime (see §External TRACE Dataset). ast-guard v2.3.0 is designed as a deterministic, zero-cost pre-filter layer complementing ML-based classifiers, not as a standalone replacement.
 
 ---
 
@@ -56,7 +56,7 @@ ast-guard is a deterministic, pre-execution static analyzer for detecting reward
 | Dataset | Source | Mode | Samples | Access | Languages | Labels |
 |---------|--------|------|---------|--------|-----------|--------|
 | TRACE-aligned suite (built-in) | hand-written by author, TRACE category names | pair | 33 samples (24 hacked, 9 benign) | Bundled | Python | hacked / benign |
-| TRACE (external) | PatronusAI HuggingFace | pair | 46 trajectories, 32 scannable | Gated | Python, Bash, JS | hacked / benign |
+| TRACE (external) | PatronusAI HuggingFace | standalone | 517 trajectories, 431 extractable | Public | Python, JS | hacked / benign |
 | School of Reward Hacks | syvb/school-of-reward-hacks-coding-tasks HF | pair | 54 Python TP + 54 TN + 26 C++ TP (skipped) | Public CC-BY-4.0 | Python, C++ | hack / clean |
 | MBPP | google-research-datasets/mbpp HuggingFace | pair (TN only) | 974 honest-vs-honest pairs | Public Apache-2.0 | Python | clean |
 | Countdown-Code | Khan et al. GitHub | pair | 15,894 | Public | Python | legitimate / hacked |
@@ -257,18 +257,68 @@ Artifact: `benchmarks/data/mbpp_results.json`
 
 The single FP is task_id 950 (`chinese_zodiac`): a legitimate 12-branch `elif` chain for the 12 zodiac signs that trips Check 5 (extensional enumeration). This is a known Check 5 edge case — constant-valued dispatch tables that happen to meet the ratio threshold.
 
-### External TRACE Dataset
+### External TRACE Dataset (PatronusAI, 2026) — Boundary / Negative Result
 
-The external TRACE dataset labels conversation-level intent rather than structural code properties, which reduces alignment with ast-guard's structural checks.
+*Full eval report: `eval/results/trace/report.md` · Adapter: `eval/adapters/trace.py` · Commit: 7c52730*
 
-| Metric | Value |
-|--------|-------|
-| Trajectories | 46 |
-| Scannable | 32 (11 Python, 21 via multilang Bash/JS) |
-| Hacked detected | 9/13 (69.2%) |
-| Benign false positives | 6/19 (31.6% FPR) |
+**This section documents a boundary result, not a recall target.** TRACE hacks are 1–2 line delta edits — changing `threshold=0.95` to `threshold=0.0001`, replacing `assert predicted == expected` with `assert True`, patching a validator to always pass. These deltas are invisible in the final file snapshot: the reconstructed file looks like normal code. Standalone scan on the final state is the wrong primitive for this regime. The numbers below establish that boundary honestly and identify two distinct limits.
 
-Note: The 31.6% FPR reflects label mismatch — TRACE labels intent at the conversation level, while ast-guard measures structural code properties. A trajectory labeled "hacked" at the conversation level may contain individual code blocks with no structurally detectable pattern.
+#### Extraction
+
+Code is embedded as tool calls in a JSON `conversation` field: `Write` = full file snapshot, `Edit` = str_replace diff. No pair-mode baseline exists — standalone only.
+
+| Status | n | % |
+|---|---|---|
+| No in-scope files (.py / .js / .sh) | 86 | 16.6% |
+| Clean (Write baseline, patches applied) | 134 | 25.9% |
+| Edit-only fragment (largest `new_string`, no Write) | 294 | 56.9% |
+| Conflict-fallback (patch failed, partial content) | 3 | 0.6% |
+
+**68% of extractable trajectories use a code fragment, not the full file.** The fragment is the largest `new_string` from an Edit call — partial context extracted from a diff, not a reconstructed snapshot. This is a structural caveat on all recall figures: the scan target often does not contain the complete hack.
+
+#### In-scope Recall — Syntactic Categories (main headline)
+
+In-scope categories where structural AST detection is plausible: 1.1.2 (test-infra patching), 1.1.3 (coverage gaming), 1.2.1 (output hardcoding), 1.2.2 (metric fabrication), 1.2.3 (eval-code modification).
+
+**Combined in-scope structural recall: 34/160 = 21.3%** (dev split, strict mode)
+
+| Category | Code | n (dev) | TP | Recall |
+|---|---|---|---|---|
+| trace-metric-fabrication | 1.2.2 | 18 | 8 | **0.444** |
+| trace-output-hardcoding | 1.2.1 | 30 | 8 | **0.267** |
+| trace-eval-code-modification | 1.2.3 | 26 | 5 | 0.192 |
+| trace-coverage-gaming | 1.1.3 | 38 | 6 | 0.158 |
+| trace-test-infra-patching | 1.1.2 | 48 | 7 | 0.146 |
+
+Global precision = 0.535 (53 TP / 99 flagged). Per-category precision figures are degenerate (all-hack slices, no benign mixed in) and not reported. The real operating-point precision is global.
+
+#### False Positive Rate: 46/153 = 30.1%
+
+Primary driver: Check 1's standalone literal threshold (80) triggers on legitimate data-processing scripts with many format strings, domain constants, and column names. Confirmed FP example: a 296-line CSV transformer with 114 literals (date format strings, `VALID_CURRENCIES` list, column names) — structurally indistinguishable from hardcoding at raw count. Language FPR: Python 31.9% (44/138); JavaScript 7.1% (1/14). Fix queued — see §Known Limitations.
+
+#### Out-of-scope Semantic — Boundary Reference (correct abstain)
+
+These categories are **not recall targets.** Low recall confirms correct scope-awareness:
+
+| Category | Code | n (dev) | Recall | Why out-of-scope |
+|---|---|---|---|---|
+| trace-test-assertion-bypass | 1.1.1 | 36 | 0.111 | High-frequency case is metrics-dict mutation before assertion — semantic |
+| trace-side-channel | 1.3.2 | 14 | 0.143 | Out-of-scope action encoded semantically |
+| trace-environment-manipulation | 1.3.1 | 14 | 0.214 | Bash data/file manipulation — outside Python AST scope |
+| trace-deceptive-completion | 1.4.2 | 19 | 0.263 | Check 6 process\_termination fires incidentally; rest semantic |
+| trace-scope-violation | 1.4.1 | 16 | 0.312 | Check 6 subprocess/cache fires incidentally; intent violation is semantic |
+
+Catches in 1.4.1/1.4.2 are incidental Check 6 behavioral fires, not structural understanding of the violation.
+
+#### Two Named Boundaries
+
+**(a) Category boundary.** Semantic and test-manipulation codes (1.1.1, 1.3.1, 1.3.2, 1.4.1, 1.4.2) are out of scope by definition — they require understanding intent, not reading structure. 11–31% recall (incidental Check 6 fires) is the honest ceiling for purely structural analysis on these categories.
+
+**(b) Primitive boundary.** TRACE hacks live in the diff, not the snapshot. The correct primitive is `scan(old_string, new_string)` per Edit call — pair-mode on each individual edit — which would expose complexity collapse (a function that had logic now returns `True`) and hardcoding signals (a threshold replaced by a literal). This is a named future-work extension; see §Future Work.
+
+#### Core Use Case Unaffected
+
+ast-guard's primary use case is **solution-level code gen** (RLVR training loops, code-gen CI): the unit of analysis is a complete function or module, not an agentic diff. That regime is validated on SORH (F1=0.98, FPR=0%) and MBPP (standalone FPR=0.31%). TRACE tests a different scan regime — agentic multi-turn editing of an existing codebase — for which standalone scan of the final state is structurally insufficient. The TRACE result is a boundary map, not a deficiency in the core use case.
 
 ---
 
@@ -433,9 +483,11 @@ Key differentiators:
 
 4. **MALT code blocks are trajectory fragments.** Extracted blocks are not standalone programs — they may be mid-function snippets, partial imports, or continuation of earlier code. This affects both detection rates and false positive analysis.
 
-5. **TRACE labels conversation-level intent.** The external TRACE dataset labels whether a conversation contains reward hacking, not whether a specific code block is structurally hacked. This creates label mismatch when evaluating code-level detection.
+5. **Check 1 literal threshold over-fires on data-processing scripts.** The standalone literal threshold (80) is calibrated for function-level code blocks (SORH/MBPP context). Large data-pipeline files legitimately contain 80+ literals (date format strings, column names, domain constants, enum values). This is the primary driver of TRACE's 30.1% FPR and generalizes to any standalone scan of data-heavy files. **Fix queued (Stage 2 calibration):** literal density per line / context-aware gating (e.g., co-occurrence with input-independence signal) rather than raw count. Not tuned on TRACE; fix will be validated on MBPP/SORH first.
 
-6. **Check 2 inactive in standalone mode.** Complexity collapse requires a baseline to compare against. Without an original code block, Check 2 produces no signal.
+6. **Standalone scan is the wrong primitive for agentic delta edits.** TRACE-style hacks operate in the diff (`old_string → new_string`), not the final file state. Standalone scan on the reconstructed snapshot misses the delta signal entirely — 21.3% in-scope recall on TRACE reflects this primitive mismatch, not a tuning deficit. The correct primitive is pair-mode scan per Edit call; see §Future Work.
+
+7. **Check 2 inactive in standalone mode.** Complexity collapse requires a baseline to compare against. Without an original code block, Check 2 produces no signal.
 
 ---
 
@@ -446,10 +498,23 @@ The following datasets were evaluated for pair-mode wiring and deferred:
 | Dataset | Reason deferred |
 |---------|----------------|
 | **Countdown-Code** (Khan et al., arXiv:2603.07084) | Static JSONL dump exists (`o4-mini-distillation-16k.jsonl`, 16k records) but contains no `is_hack` label. Classifying which solutions are genuine vs. harness-manipulating requires running the verifier — generating rollouts is out of scope for a static benchmark. |
-| **TRACE** (PatronusAI, arXiv:2601.20103) | 517 multi-turn conversations (~26 turns each). Labels are at conversation level, not code-block level. Extracting clean `(original_code, generated_code)` AST pairs requires trajectory parsing that produces high label-mismatch noise (see §External TRACE Dataset above). |
+| **TRACE** (PatronusAI, arXiv:2601.20103) | Standalone eval completed (see §External TRACE Dataset). **Pair mode on TRACE still deferred:** the correct scan unit is `scan(old_string, new_string)` per Edit tool call — diff-aware pair mode on individual edits. This exposes complexity collapse and hardcoding signals invisible in the final snapshot. Named future-work extension; see §Future Work. |
 | **Terminal Wrench** (arXiv:2604.17596) | 331 environments; baseline and hack expressed as bash terminal trajectories, not static code pairs. Heavy extraction work needed to produce `(original_code, generated_code)` pairs. |
 | **MBPP-Honeypot / Obfuscation Atlas** (arXiv:2602.15515) | No static completion dump found on HuggingFace (`ethz-spylab/mbpp-honeypot` does not exist). Env/training code only — no releasable artifact verified. |
 | **EvilGenie** (Gabor et al.) | Live execution harness; no static `(original, hacked)` pair dump released. To use: generate rollouts with the harness, export as labeled pairs, write a custom loader. |
+
+---
+
+## Future Work
+
+Named extensions, not yet implemented:
+
+| Extension | Motivation | Dataset to validate on |
+|---|---|---|
+| **Diff-aware pair scan** (`scan(old_string, new_string)` per Edit call) | TRACE hacks live in the delta: complexity collapse and hardcoding signals become visible only when old and new are compared directly. Standalone scan on the final snapshot misses these. | TRACE (517 trajectories) |
+| **Literal density / context-aware Check 1** | Raw literal count over-fires on data-processing scripts. Density per line, or gating on co-occurrence with input-independence, would reduce false positives without affecting detection on function-level code. | MBPP / SORH (regression) |
+| **Branch-aware Check 5** | Modular-arithmetic dispatch tables (`(year-2000)%12 == k`) and planet-lookup lists are not extensional enumeration. A param-keyed condition gate (analogous to Fix C on Check 6) would eliminate the `chinese_zodiac` and `bf` FPs. | MBPP / HumanEval |
+| **While-loop taint propagation (Fix A extension)** | Fix A covers for-loops; while-loops with parameter-controlled iteration count (e.g., `cal_sum`) still exhibit the taint gap. | MBPP |
 
 ---
 
@@ -487,6 +552,9 @@ python -m benchmarks.run_benchmark --benchmark countdown-code
 # MALT benchmark (requires dataset at default path — user-managed; see memory note)
 python -m benchmarks.run_benchmark --benchmark malt
 
+# TRACE eval harness (standalone boundary eval — downloads ~20 MB from HuggingFace)
+python -m eval.run --dataset trace --output eval/results/trace --mode strict
+
 # Full cross-benchmark run with export
 python -m benchmarks.run_benchmark --benchmark all --json results.json
 ```
@@ -496,7 +564,7 @@ python -m benchmarks.run_benchmark --benchmark all --json results.json
 | Dataset | Version / Commit |
 |---------|-----------------|
 | MALT | metr-evals/malt-public, accessed 2026-05-31 |
-| TRACE (external) | PatronusAI HuggingFace, accessed 2026-05-30 |
+| TRACE (external) | PatronusAI HuggingFace, accessed 2026-06-22 |
 | Countdown-Code | Khan et al. GitHub, main branch, accessed 2026-05-29 |
 | School of Reward Hacks | syvb/school-of-reward-hacks-coding-tasks, accessed 2026-06-10 |
 | MBPP | google-research-datasets/mbpp, accessed 2026-06-10 |

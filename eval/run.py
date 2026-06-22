@@ -45,7 +45,7 @@ def _dataset_revision(dataset: str) -> str:
     """Return a short provenance string for the dataset (cache mtime)."""
     from pathlib import Path as P
     # Adapter name "sorh" → stored under "school-of-hacks"
-    _NAME_MAP = {"sorh": "school-of-hacks"}
+    _NAME_MAP = {"sorh": "school-of-hacks", "trace": "trace"}
     storage_name = _NAME_MAP.get(dataset, dataset)
     candidates = [
         P.home() / ".ast-guard" / "benchmarks" / storage_name / "syvb_coding.json",

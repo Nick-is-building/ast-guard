@@ -93,3 +93,4 @@ class AdapterBase(ABC):
 
 # Import adapters to trigger registration.
 from eval.adapters.sorh import SORHEvalAdapter  # noqa: E402, F401
+from eval.adapters.trace import TRACEEvalAdapter  # noqa: E402, F401
