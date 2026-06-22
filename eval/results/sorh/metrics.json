@@ -1,12 +1,12 @@
 {
   "meta": {
-    "ast_guard_commit": "6582137",
+    "ast_guard_commit": "2a2f54f",
     "dataset": "sorh",
     "dataset_revision": "2026-06-15T03:11:46Z",
     "split_seed": 42,
     "dev_ratio": 0.8,
     "scan_mode": "strict",
-    "timestamp": "2026-06-22T04:14:45Z",
+    "timestamp": "2026-06-22T05:05:31Z",
     "n_total": 104,
     "n_dev": 82,
     "n_held_out": 22
@@ -20,19 +20,19 @@
       "n_hack": 41,
       "n_benign": 41,
       "n_abstain": 0,
-      "pr_auc": 0.7866,
+      "pr_auc": 0.939,
       "precision_at_recall_80": 0.5,
       "precision_at_recall_90": 0.5,
-      "recall_at_precision_80": 0.14634146341463414,
-      "recall_at_precision_90": 0.14634146341463414,
+      "recall_at_precision_80": 0.7560975609756098,
+      "recall_at_precision_90": 0.7560975609756098,
       "precision": 1.0,
-      "recall": 0.1463,
-      "f1": 0.2553,
+      "recall": 0.7561,
+      "f1": 0.8611,
       "confusion_matrix": {
-        "tp": 6,
+        "tp": 31,
         "fp": 0,
         "tn": 41,
-        "fn": 35
+        "fn": 10
       }
     },
     "by_language": {
@@ -41,19 +41,19 @@
         "n_hack": 41,
         "n_benign": 41,
         "n_abstain": 0,
-        "pr_auc": 0.7866,
+        "pr_auc": 0.939,
         "precision_at_recall_80": 0.5,
         "precision_at_recall_90": 0.5,
-        "recall_at_precision_80": 0.14634146341463414,
-        "recall_at_precision_90": 0.14634146341463414,
+        "recall_at_precision_80": 0.7560975609756098,
+        "recall_at_precision_90": 0.7560975609756098,
         "precision": 1.0,
-        "recall": 0.1463,
-        "f1": 0.2553,
+        "recall": 0.7561,
+        "f1": 0.8611,
         "confusion_matrix": {
-          "tp": 6,
+          "tp": 31,
           "fp": 0,
           "tn": 41,
-          "fn": 35
+          "fn": 10
         }
       }
     },
@@ -69,13 +69,13 @@
         "recall_at_precision_80": 1.0,
         "recall_at_precision_90": 1.0,
         "precision": 1.0,
-        "recall": 0.1463,
-        "f1": 0.2553,
+        "recall": 0.7561,
+        "f1": 0.8611,
         "confusion_matrix": {
-          "tp": 6,
+          "tp": 31,
           "fp": 0,
           "tn": 0,
-          "fn": 35
+          "fn": 10
         }
       },
       "honest-vs-honest": {
@@ -131,13 +131,13 @@
         "recall_at_precision_80": 1.0,
         "recall_at_precision_90": 1.0,
         "precision": 1.0,
-        "recall": 0.1463,
-        "f1": 0.2553,
+        "recall": 0.7561,
+        "f1": 0.8611,
         "confusion_matrix": {
-          "tp": 6,
+          "tp": 31,
           "fp": 0,
           "tn": 0,
-          "fn": 35
+          "fn": 10
         }
       }
     },
