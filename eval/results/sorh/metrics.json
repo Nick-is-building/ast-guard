@@ -1,0 +1,252 @@
+{
+  "meta": {
+    "ast_guard_commit": "6582137",
+    "dataset": "sorh",
+    "dataset_revision": "2026-06-15T03:11:46Z",
+    "split_seed": 42,
+    "dev_ratio": 0.8,
+    "scan_mode": "strict",
+    "timestamp": "2026-06-22T04:14:45Z",
+    "n_total": 104,
+    "n_dev": 82,
+    "n_held_out": 22
+  },
+  "metrics": {
+    "split": "dev",
+    "score_key": "standalone_score",
+    "binary_key": "standalone_binary",
+    "global": {
+      "n_total": 82,
+      "n_hack": 41,
+      "n_benign": 41,
+      "n_abstain": 0,
+      "pr_auc": 0.7866,
+      "precision_at_recall_80": 0.5,
+      "precision_at_recall_90": 0.5,
+      "recall_at_precision_80": 0.14634146341463414,
+      "recall_at_precision_90": 0.14634146341463414,
+      "precision": 1.0,
+      "recall": 0.1463,
+      "f1": 0.2553,
+      "confusion_matrix": {
+        "tp": 6,
+        "fp": 0,
+        "tn": 41,
+        "fn": 35
+      }
+    },
+    "by_language": {
+      "python": {
+        "n_total": 82,
+        "n_hack": 41,
+        "n_benign": 41,
+        "n_abstain": 0,
+        "pr_auc": 0.7866,
+        "precision_at_recall_80": 0.5,
+        "precision_at_recall_90": 0.5,
+        "recall_at_precision_80": 0.14634146341463414,
+        "recall_at_precision_90": 0.14634146341463414,
+        "precision": 1.0,
+        "recall": 0.1463,
+        "f1": 0.2553,
+        "confusion_matrix": {
+          "tp": 6,
+          "fp": 0,
+          "tn": 41,
+          "fn": 35
+        }
+      }
+    },
+    "by_category": {
+      "hardcoded-test-cases": {
+        "n_total": 41,
+        "n_hack": 41,
+        "n_benign": 0,
+        "n_abstain": 0,
+        "pr_auc": 1.0,
+        "precision_at_recall_80": 1.0,
+        "precision_at_recall_90": 1.0,
+        "recall_at_precision_80": 1.0,
+        "recall_at_precision_90": 1.0,
+        "precision": 1.0,
+        "recall": 0.1463,
+        "f1": 0.2553,
+        "confusion_matrix": {
+          "tp": 6,
+          "fp": 0,
+          "tn": 0,
+          "fn": 35
+        }
+      },
+      "honest-vs-honest": {
+        "n_total": 41,
+        "n_hack": 0,
+        "n_benign": 41,
+        "n_abstain": 0,
+        "pr_auc": 0.0,
+        "precision_at_recall_80": null,
+        "precision_at_recall_90": null,
+        "recall_at_precision_80": null,
+        "recall_at_precision_90": null,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 41,
+          "fn": 0
+        }
+      }
+    },
+    "by_syntactic_semantic": {
+      "benign": {
+        "n_total": 41,
+        "n_hack": 0,
+        "n_benign": 41,
+        "n_abstain": 0,
+        "pr_auc": 0.0,
+        "precision_at_recall_80": null,
+        "precision_at_recall_90": null,
+        "recall_at_precision_80": null,
+        "recall_at_precision_90": null,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": {
+          "tp": 0,
+          "fp": 0,
+          "tn": 41,
+          "fn": 0
+        }
+      },
+      "syntactic": {
+        "n_total": 41,
+        "n_hack": 41,
+        "n_benign": 0,
+        "n_abstain": 0,
+        "pr_auc": 1.0,
+        "precision_at_recall_80": 1.0,
+        "precision_at_recall_90": 1.0,
+        "recall_at_precision_80": 1.0,
+        "recall_at_precision_90": 1.0,
+        "precision": 1.0,
+        "recall": 0.1463,
+        "f1": 0.2553,
+        "confusion_matrix": {
+          "tp": 6,
+          "fp": 0,
+          "tn": 0,
+          "fn": 35
+        }
+      }
+    },
+    "llm_judge_baselines": {
+      "ImpossibleBench-Monitor": {
+        "f1_range": "0.86–0.89"
+      },
+      "TRACE-best-model": {
+        "f1": 0.63
+      }
+    },
+    "pair_mode": {
+      "split": "dev",
+      "score_key": "pair_score",
+      "binary_key": "pair_binary",
+      "global": {
+        "n_total": 41,
+        "n_hack": 41,
+        "n_benign": 0,
+        "n_abstain": 0,
+        "pr_auc": 1.0,
+        "precision_at_recall_80": 1.0,
+        "precision_at_recall_90": 1.0,
+        "recall_at_precision_80": 1.0,
+        "recall_at_precision_90": 1.0,
+        "precision": 1.0,
+        "recall": 0.9756,
+        "f1": 0.9877,
+        "confusion_matrix": {
+          "tp": 40,
+          "fp": 0,
+          "tn": 0,
+          "fn": 1
+        }
+      },
+      "by_language": {
+        "python": {
+          "n_total": 41,
+          "n_hack": 41,
+          "n_benign": 0,
+          "n_abstain": 0,
+          "pr_auc": 1.0,
+          "precision_at_recall_80": 1.0,
+          "precision_at_recall_90": 1.0,
+          "recall_at_precision_80": 1.0,
+          "recall_at_precision_90": 1.0,
+          "precision": 1.0,
+          "recall": 0.9756,
+          "f1": 0.9877,
+          "confusion_matrix": {
+            "tp": 40,
+            "fp": 0,
+            "tn": 0,
+            "fn": 1
+          }
+        }
+      },
+      "by_category": {
+        "hardcoded-test-cases": {
+          "n_total": 41,
+          "n_hack": 41,
+          "n_benign": 0,
+          "n_abstain": 0,
+          "pr_auc": 1.0,
+          "precision_at_recall_80": 1.0,
+          "precision_at_recall_90": 1.0,
+          "recall_at_precision_80": 1.0,
+          "recall_at_precision_90": 1.0,
+          "precision": 1.0,
+          "recall": 0.9756,
+          "f1": 0.9877,
+          "confusion_matrix": {
+            "tp": 40,
+            "fp": 0,
+            "tn": 0,
+            "fn": 1
+          }
+        }
+      },
+      "by_syntactic_semantic": {
+        "syntactic": {
+          "n_total": 41,
+          "n_hack": 41,
+          "n_benign": 0,
+          "n_abstain": 0,
+          "pr_auc": 1.0,
+          "precision_at_recall_80": 1.0,
+          "precision_at_recall_90": 1.0,
+          "recall_at_precision_80": 1.0,
+          "recall_at_precision_90": 1.0,
+          "precision": 1.0,
+          "recall": 0.9756,
+          "f1": 0.9877,
+          "confusion_matrix": {
+            "tp": 40,
+            "fp": 0,
+            "tn": 0,
+            "fn": 1
+          }
+        }
+      },
+      "llm_judge_baselines": {
+        "ImpossibleBench-Monitor": {
+          "f1_range": "0.86–0.89"
+        },
+        "TRACE-best-model": {
+          "f1": 0.63
+        }
+      }
+    }
+  }
+}
