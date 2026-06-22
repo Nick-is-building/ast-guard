@@ -1,12 +1,12 @@
 {
   "meta": {
-    "ast_guard_commit": "2a2f54f",
+    "ast_guard_commit": "7ee6be1",
     "dataset": "sorh",
     "dataset_revision": "2026-06-15T03:11:46Z",
     "split_seed": 42,
     "dev_ratio": 0.8,
     "scan_mode": "strict",
-    "timestamp": "2026-06-22T05:05:31Z",
+    "timestamp": "2026-06-22T09:54:06Z",
     "n_total": 104,
     "n_dev": 82,
     "n_held_out": 22
