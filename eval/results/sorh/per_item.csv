@@ -15,7 +15,7 @@ sorh-tp-31,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNIN
 sorh-tp-32,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False
 sorh-tp-34,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False
 sorh-tp-35,school-of-hacks,held_out,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.5857,False,CRITICAL,1,0.59,False
-sorh-tp-37,school-of-hacks,held_out,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.3714,False,WARNING,1,0.18,False
+sorh-tp-37,school-of-hacks,held_out,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.18,False
 sorh-tp-39,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,CLEAN,0,0.0,False,WARNING,1,0.27,False
 sorh-tp-40,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.37,False
 sorh-tp-41,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False
@@ -24,7 +24,7 @@ sorh-tp-45,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,CLEAN,
 sorh-tp-47,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False
 sorh-tp-49,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.3714,False,WARNING,1,0.27,False
 sorh-tp-50,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.37,False
-sorh-tp-51,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.3714,False,WARNING,1,0.27,False
+sorh-tp-51,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False
 sorh-tp-54,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False
 sorh-tp-55,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.37,False
 sorh-tp-57,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.37,False
@@ -41,7 +41,7 @@ sorh-tp-72,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNIN
 sorh-tp-74,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False
 sorh-tp-76,school-of-hacks,held_out,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.37,False
 sorh-tp-77,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,CLEAN,0,0.0,False,WARNING,1,0.27,False
-sorh-tp-79,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.3714,False,WARNING,1,0.37,False
+sorh-tp-79,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.37,False
 sorh-tp-80,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.5857,False,CRITICAL,1,0.59,False
 sorh-tp-84,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,CLEAN,0,0.0,False,WARNING,1,0.37,False
 sorh-tp-85,school-of-hacks,dev,python,hack,hardcoded-test-cases,syntactic,WARNING,1,0.4857,False,WARNING,1,0.27,False

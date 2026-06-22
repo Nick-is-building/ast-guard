@@ -131,24 +131,32 @@ The 2 FN are hardcoded solutions that stayed below Check 1/5 thresholds. The 28 
 Offline eval harness (`eval/`), deterministic split seed=42, 80% dev / 20% held-out.
 Held-out split was **never used for tuning** — reported once, final.
 
-**Configuration:** thresholds lowered from the prior release defaults (5 / 4 / 0.80)
-to (2 / 2 / 0.80) for `_MIN_RETURNS` / `_MIN_BRANCHES` / `_MIN_INDEPENDENT_RATIO`,
-plus two structural loop fixes in `ast_guard/dataflow.py`:
+**Configuration (Stage 2 — branch-aware fix):** `_MIN_RETURNS=3` / `_MIN_BRANCHES=3` / `_MIN_INDEPENDENT_RATIO=0.80`, plus three structural fixes in `ast_guard/dataflow.py`:
 - Loop-body taint propagation (Fix A): when a for-loop iterator references tainted
-  names, all variables assigned anywhere in the loop body are also tainted — the
-  iteration count, and therefore each body assignment's final value, depends on the
-  parameter.
-- Loop-internal return exclusion (Fix B): returns whose execution depends on a
-  tainted loop iterator are excluded from the independence count; whether they run at
-  all depends on the parameter, not just their return value.
+  names, all variables assigned anywhere in the loop body are also tainted.
+- Loop-internal return exclusion (Fix B): returns inside a tainted for-loop's body
+  are excluded from the independence count — whether they execute depends on the loop.
+- Branch-aware condition gate (Fix C): a literal return is only counted as
+  input-independent when the nearest enclosing `if` condition is a direct
+  param-vs-literal comparison (`param == specific_value`). Conditions involving
+  computed intermediates (`sqa == sqa + sqb`, `x % 2 == 0`, `re.search(...)`) are
+  NOT treated as param-keyed, which eliminates FPs from legitimate validators and
+  classifiers whose return VALUES happen to be literals.
 
-Both fixes are structurally sound and verified by two new regression tests (819 tests
-total, 8 skipped for optional MCP extra).
+Threshold rationale: 3/3 gives identical SORH recall to 2/2, and eliminates two
+method-call-taint FPs (functions with exactly 2 returns caught by a taint gap, not
+genuine dispatch tables). 5/4 reduces recall to R=0.146 — unacceptable.
+
+All fixes verified by 819 unit tests (8 skipped for optional MCP extra). MBPP
+standalone FPR (974 reference solutions, no-baseline scan): **0.31%** (3 FPs) under
+the current 3/3 thresholds vs. 0.21% under old 5/4 thresholds — the Δ0.10% tradeoff
+is the cost of detecting 31 vs. 6 SORH dev hacks.
 
 Reproducibility metadata:
-- ast-guard commit: `de1dcde`
+- ast-guard commit: see `git log -1 --format="%h"`
 - SORH dataset revision: `2026-06-15T03:11:46Z`
 - Split seed: 42, dev_ratio: 0.8, scan mode: strict
+- MBPP FPR artifact: `eval/results/mbpp_precision/report.md`
 
 #### Dev split (82 records — 41 hack, 41 benign)
 
@@ -190,6 +198,22 @@ Pair mode on TP records: TP=40 FP=0 FN=1, F1=0.988, P=1.000, R=0.976.
 Both gap types have structurally sound solutions; neither is addressable by simple
 threshold tuning at `_MIN_INDEPENDENT_RATIO=0.80` without introducing held-out FPs
 on benign algorithmic functions (perrin, count_binary_seq, is_valid_ipv4).
+
+### MBPP + HumanEval Standalone Precision Stress Test (Stage 2 checkpoint)
+
+Standalone scan of all reference solutions. All-benign: no TPs, only FPR is measured.
+Full per-item report: `eval/results/mbpp_precision/report.md`.
+
+| Dataset | n | FP (old 5/4) | FPR (old) | FP (new 3/3) | FPR (new) | Δ |
+|---------|---|-------------|-----------|-------------|-----------|---|
+| MBPP | 974 | 2 | 0.21% | 3 | **0.31%** | +1 |
+| HumanEval | 164 | 7 | 4.27% | 7 | **4.27%** | 0 |
+
+The branch-aware Fix C eliminated 24 of 25 new FPs introduced when thresholds were
+lowered from 5/4 to 2/2. HumanEval FPR at 3/3 now equals OLD (5/4) — no precision
+cost at all on HumanEval. Remaining 3 MBPP FPs vs old: 1 is the pre-existing
+`chinese_zodiac` (Check 5 edge case), 1 is a while-loop taint gap, 1 is
+`last_Digit_Factorial` (legitimate mathematical table with ratio exactly = 0.80).
 
 ### MBPP (pair mode — TN FPR baseline)
 

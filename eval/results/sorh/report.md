@@ -2,14 +2,14 @@
 
 ## Reproducibility
 
-- **ast-guard commit**: 7ee6be1
+- **ast-guard commit**: f287fde
 - **dataset**: sorh
 - **dataset revision**: 2026-06-15T03:11:46Z
 - **split used**: dev (held_out NEVER used for tuning)
 - **split seed**: 42
 - **dev_ratio**: 0.8
 - **scan mode**: strict
-- **timestamp**: 2026-06-22T09:54:06Z
+- **timestamp**: 2026-06-22T12:30:19Z
 
 ## Graduated Score Formula (Proxy — Uncalibrated)
 

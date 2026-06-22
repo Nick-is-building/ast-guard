@@ -39,7 +39,7 @@ _OUTPUT_DIR = Path("eval/results/mbpp_precision")
 # ── threshold configs ────────────────────────────────────────────────────────
 _CONFIGS = {
     "old": {"min_returns": 5, "min_branches": 4},
-    "new": {"min_returns": 2, "min_branches": 2},
+    "new": {"min_returns": 3, "min_branches": 3},
 }
 _RATIO = 0.80   # unchanged across both configs
 
