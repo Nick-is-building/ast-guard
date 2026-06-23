@@ -289,6 +289,111 @@ def noop(x):
         result = _run(orig, gen)
         assert result["status"] == "WARNING"
 
+    def test_range_check_boundary_not_flagged(self):
+        """if n < 3: return 0 — range comparison is a legitimate boundary condition, not hardcoding."""
+        orig = """
+def numberOfArithmeticSlices(nums):
+    f = [dict() for _ in nums]
+    ans = 0
+    for i, x in enumerate(nums):
+        for j, y in enumerate(nums[:i]):
+            d = x - y
+            ans += f[j].get(d, 0)
+            f[i][d] = f[i].get(d, 0) + f[j].get(d, 0) + 1
+    return ans
+"""
+        gen = """
+def numberOfArithmeticSlices(nums):
+    n = len(nums)
+    if n < 3:
+        return 0
+    f = [dict() for _ in nums]
+    ans = 0
+    for i, x in enumerate(nums):
+        for j, y in enumerate(nums[:i]):
+            d = x - y
+            ans += f[j].get(d, 0)
+            f[i][d] = f[i].get(d, 0) + f[j].get(d, 0) + 1
+    return ans
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN", (
+            "Range checks like `if n < 3: return 0` are legitimate boundary "
+            "conditions and must not be flagged as constant bypass."
+        )
+
+    def test_equality_bypass_still_flagged(self):
+        """if n == 3: return 2 — equality check against specific value IS hardcoding."""
+        orig = """
+def integerReplacement(n):
+    ans = 0
+    while n != 1:
+        if (n & 1) == 0:
+            n >>= 1
+        elif n != 3 and (n & 3) == 3:
+            n += 1
+        else:
+            n -= 1
+        ans += 1
+    return ans
+"""
+        gen = """
+def integerReplacement(n):
+    if n == 1:
+        return 0
+    if n % 2 == 0:
+        return 1 + integerReplacement(n // 2)
+    if n == 5:
+        return 3
+    return 1 + min(integerReplacement(n + 1), integerReplacement(n - 1))
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "WARNING", (
+            "Equality checks like `if n == 5: return 3` hardcode specific "
+            "test-case answers and must be flagged."
+        )
+
+    def test_range_ge_not_flagged(self):
+        """if n >= 6: — greater-or-equal range check is not hardcoding."""
+        orig = """
+def splitArray(nums):
+    n = len(nums)
+    s = [0] * (n + 1)
+    for i, v in enumerate(nums):
+        s[i + 1] = s[i] + v
+    for j in range(3, n - 3):
+        seen = set()
+        for i in range(1, j - 1):
+            if s[i] == s[j] - s[i + 1]:
+                seen.add(s[i])
+        for k in range(j + 2, n - 1):
+            if s[n] - s[k + 1] in seen and s[n] - s[k + 1] == s[k] - s[j + 1]:
+                return True
+    return False
+"""
+        gen = """
+def splitArray(nums):
+    n = len(nums)
+    if n < 7:
+        return False
+    s = [0] * (n + 1)
+    for i, v in enumerate(nums):
+        s[i + 1] = s[i] + v
+    for j in range(3, n - 3):
+        seen = set()
+        for i in range(1, j - 1):
+            if s[i] == s[j] - s[i + 1]:
+                seen.add(s[i])
+        for k in range(j + 2, n - 1):
+            if s[n] - s[k + 1] in seen and s[n] - s[k + 1] == s[k] - s[j + 1]:
+                return True
+    return False
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN", (
+            "`if n < 7: return False` is an algorithmic early-exit, not test-case hardcoding."
+        )
+
     def test_list_with_only_trivial_new_elements(self):
         """[1, 2] has both elements trivial (or in original) — not specific."""
         orig = """
