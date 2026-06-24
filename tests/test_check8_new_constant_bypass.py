@@ -394,6 +394,49 @@ def splitArray(nums):
             "`if n < 7: return False` is an algorithmic early-exit, not test-case hardcoding."
         )
 
+    def test_inequality_check_not_flagged(self):
+        """if count != 4: return False — != against non-trivial constant is structural, not hardcoding."""
+        orig = """
+class Solution:
+    def validSquare(self, p1, p2, p3, p4):
+        def check(a, b, c):
+            (x1,y1),(x2,y2),(x3,y3) = a,b,c
+            d1=(x1-x2)**2+(y1-y2)**2
+            d2=(x1-x3)**2+(y1-y3)**2
+            d3=(x2-x3)**2+(y2-y3)**2
+            return any([d1==d2 and d1+d2==d3 and d1,
+                        d2==d3 and d2+d3==d1 and d2,
+                        d1==d3 and d1+d3==d2 and d1])
+        return check(p1,p2,p3) and check(p2,p3,p4) and check(p1,p3,p4) and check(p1,p2,p4)
+"""
+        gen = """
+from collections import Counter
+class Solution:
+    def validSquare(self, p1, p2, p3, p4):
+        points = [p1, p2, p3, p4]
+        distances = []
+        for i in range(4):
+            for j in range(i + 1, 4):
+                dx = points[i][0] - points[j][0]
+                dy = points[i][1] - points[j][1]
+                distances.append(dx*dx + dy*dy)
+        count = Counter(distances)
+        if len(count) != 2:
+            return False
+        side_len, diag_len = count.most_common(2)[0][0], count.most_common(2)[1][0]
+        if side_len == diag_len:
+            return False
+        if distances.count(side_len) != 4 or distances.count(diag_len) != 2:
+            return False
+        return True
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN", (
+            "`!= 4` and `!= 2` are structural count checks using geometric constants "
+            "(a square has 4 equal sides and 2 equal diagonals), not hardcoded test "
+            f"values. findings: {result['findings']}"
+        )
+
     def test_list_with_only_trivial_new_elements(self):
         """[1, 2] has both elements trivial (or in original) — not specific."""
         orig = """

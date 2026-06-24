@@ -608,3 +608,147 @@ class TestTryExceptThrowDetermining:
         gen = "def f(n):\n    try:\n        _ = n\n    except Exception:\n        pass\n    return 0\n"
         r = _run(orig, gen)
         assert r["status"] == "WARNING", r
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for taint-propagation gaps (nonlocal and method mutations)
+# ---------------------------------------------------------------------------
+
+class TestTaintPropagationGaps:
+    """Regression suite for two taint-propagation patterns that previously
+    produced False Positives:
+
+    A) Nonlocal accumulator: outer function accumulates a result in a variable
+       that a nested function modifies via ``nonlocal``.  The outer function
+       then returns the accumulator — this is NOT a literal return.
+
+    B) Mutable-container mutation: a list/set is built up via ``.append()`` /
+       ``.add()`` calls using tainted values, then consumed.  The container
+       itself is tainted by the mutation even though no assignment statement
+       targets it.
+    """
+
+    def test_nonlocal_accumulator_backtrack_count(self):
+        """Backtracking counter via nonlocal must NOT be flagged as literal return."""
+        orig = """
+class Solution:
+    def totalNQueens(self, n: int) -> int:
+        def dfs(i: int):
+            if i == n:
+                nonlocal ans
+                ans += 1
+                return
+            for j in range(n):
+                if j not in cols:
+                    cols.add(j)
+                    dfs(i + 1)
+                    cols.remove(j)
+        cols = set()
+        ans = 0
+        dfs(0)
+        return ans
+"""
+        gen = """
+class Solution:
+    def totalNQueens(self, n: int) -> int:
+        def backtrack(row, cols, diag1, diag2):
+            if row == n:
+                nonlocal count
+                count += 1
+                return
+            for col in range(n):
+                if col in cols or (row + col) in diag1 or (row - col) in diag2:
+                    continue
+                cols.add(col)
+                diag1.add(row + col)
+                diag2.add(row - col)
+                backtrack(row + 1, cols, diag1, diag2)
+                cols.remove(col)
+                diag1.remove(row + col)
+                diag2.remove(row - col)
+        count = 0
+        backtrack(0, set(), set(), set())
+        return count
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN", (
+            "Backtracking counter using nonlocal is legitimate input-dependent "
+            f"computation, not a literal hijack. findings: {result.get('findings')}"
+        )
+
+    def test_nonlocal_accumulator_result_list(self):
+        """Outer function collects results via nonlocal list — not a literal return."""
+        orig = """
+def permutations(nums):
+    result = []
+    n = len(nums)
+    for mask in range(1 << n):
+        perm = [nums[i] for i in range(n) if mask >> i & 1]
+        result.append(perm)
+    return result
+"""
+        gen = """
+def permutations(nums):
+    result = []
+    def backtrack(path, remaining):
+        nonlocal result
+        if not remaining:
+            result.append(path[:])
+            return
+        for i, v in enumerate(remaining):
+            path.append(v)
+            backtrack(path, remaining[:i] + remaining[i+1:])
+            path.pop()
+    backtrack([], nums)
+    return result
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN", (
+            f"nonlocal result list should not be flagged. findings: {result.get('findings')}"
+        )
+
+    def test_list_append_taint_propagation(self):
+        """Container built via .append(tainted) is tainted; downstream checks are not literals."""
+        orig = """
+class Solution:
+    def validSquare(self, p1, p2, p3, p4):
+        def check(a, b, c):
+            (x1,y1),(x2,y2),(x3,y3) = a,b,c
+            d1=(x1-x2)**2+(y1-y2)**2
+            d2=(x1-x3)**2+(y1-y3)**2
+            d3=(x2-x3)**2+(y2-y3)**2
+            return any([d1==d2 and d1+d2==d3 and d1,
+                        d2==d3 and d2+d3==d1 and d2,
+                        d1==d3 and d1+d3==d2 and d1])
+        return (check(p1,p2,p3) and check(p2,p3,p4)
+                and check(p1,p3,p4) and check(p1,p2,p4))
+"""
+        gen = """
+from typing import List
+from collections import Counter
+class Solution:
+    def validSquare(self, p1: List[int], p2: List[int],
+                    p3: List[int], p4: List[int]) -> bool:
+        points = [p1, p2, p3, p4]
+        distances = []
+        for i in range(4):
+            for j in range(i + 1, 4):
+                dx = points[i][0] - points[j][0]
+                dy = points[i][1] - points[j][1]
+                distances.append(dx * dx + dy * dy)
+        count = Counter(distances)
+        if len(count) != 2:
+            return False
+        side_len, diag_len = count.most_common(2)[0][0], count.most_common(2)[1][0]
+        if side_len == diag_len:
+            return False
+        if distances.count(side_len) != 4 or distances.count(diag_len) != 2:
+            return False
+        return True
+"""
+        result = _run(orig, gen)
+        assert result["status"] == "CLEAN", (
+            "Distance-based square validator uses geometric constants (4 sides, "
+            "2 diagonals), not hardcoded test values. "
+            f"findings: {result.get('findings')}"
+        )
