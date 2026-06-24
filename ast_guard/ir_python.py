@@ -323,11 +323,14 @@ def _collect_bypass_events(
         for node in ast.walk(stmt.test):
             if not isinstance(node, ast.Compare):
                 continue
-            # Range comparisons are legitimate algorithmic boundary conditions
-            # (e.g. `if n < 3: return 0`).  Only equality/inequality checks
-            # signal test-case hardcoding.
-            if any(isinstance(op, (ast.Lt, ast.Gt, ast.LtE, ast.GtE))
-                   for op in node.ops):
+            # Only equality-class operators signal test-case hardcoding
+            # (== / is / in).  Range checks (<, >, <=, >=) are legitimate
+            # algorithmic boundaries, and inequality checks (!= / is not /
+            # not in) are structural counts or validation guards (e.g.
+            # `if distances.count(side) != 4: return False` is correct
+            # geometry, not a hardcoded test value).
+            if not any(isinstance(op, (ast.Eq, ast.Is, ast.In))
+                       for op in node.ops):
                 continue
             sides = [node.left] + list(node.comparators)
             for i, side in enumerate(sides):

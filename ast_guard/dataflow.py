@@ -110,6 +110,20 @@ def _compute_tainted_names(
     target, walrus). If the RHS expression mentions a tainted name, all
     assignment targets become tainted. Iteration repeats until the set is
     stable (bounded by O(#assignments)).
+
+    Additionally handles two mutation patterns that bypass simple assignment
+    tracking:
+
+    - **Nonlocal accumulator**: a nested function with ``nonlocal x`` can
+      modify ``x`` in the outer scope based on input-dependent computation.
+      Any name declared ``nonlocal`` inside a nested function is conservatively
+      added to ``tainted``, because the nested function may write an
+      input-dependent value into it.
+
+    - **Mutable-container method calls**: ``obj.method(tainted_arg)`` (e.g.
+      ``distances.append(dist)``) mutates ``obj`` with tainted data but
+      produces no new assignment node.  The receiver name ``obj`` is added to
+      ``tainted`` when any argument references a tainted name.
     """
     tainted = set(params)
 
@@ -190,6 +204,29 @@ def _compute_tainted_names(
                     if isinstance(stmt.target, ast.Name) and stmt.target.id not in tainted:
                         tainted.add(stmt.target.id)
                         changed = True
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Nonlocal accumulator pattern: a variable declared nonlocal
+                # inside a nested function is mutated by that function's
+                # (possibly input-dependent) logic.  Taint it in this scope so
+                # that ``return accumulator`` is not mistaken for a literal return.
+                for inner_node in ast.walk(stmt):
+                    if isinstance(inner_node, ast.Nonlocal):
+                        for nm in inner_node.names:
+                            if nm not in tainted:
+                                tainted.add(nm)
+                                changed = True
+            elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                call = stmt.value
+                # Mutable-container mutation: obj.method(tainted_arg, ...) taints obj.
+                # Covers list.append, set.add, dict.update, list.extend, etc.
+                if (isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name)):
+                    all_args = list(call.args) + [kw.value for kw in call.keywords]
+                    if any(set(_name_references(arg)) & tainted for arg in all_args):
+                        nm = call.func.value.id
+                        if nm not in tainted:
+                            tainted.add(nm)
+                            changed = True
     return tainted
 
 
