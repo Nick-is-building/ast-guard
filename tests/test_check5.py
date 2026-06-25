@@ -500,3 +500,255 @@ def encode(n):
     assert checks["check_5_extensional_enumeration"]["status"] == "WARNING"
     assert checks["check_2_complexity_collapse"]["status"] == "CLEAN"
     assert result["verdict"] == "CRITICAL"
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 — new syntax forms
+# ---------------------------------------------------------------------------
+
+class TestBoolOpIfForm:
+    """BoolOp(And) conditions in if/elif chains."""
+
+    def test_tp_boolopeq_if_chain(self, default_config):
+        """TP: multi-arg Eq if-chain `if n==1 and p==1: return 2` fires Check 5."""
+        orig = "def f(n, p): return n + p"
+        gen = """
+def flipLights(n, presses):
+    if n == 1 and presses == 1:
+        return 2
+    elif n == 1 and presses == 2:
+        return 1
+    elif n == 2 and presses == 1:
+        return 4
+    elif n == 2 and presses == 2:
+        return 6
+    elif n == 2 and presses == 3:
+        return 4
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "WARNING"
+        assert "flipLights" in result["findings"][0]["explanation"]
+
+    def test_tp_fliplights_with_gte_ternary(self, default_config):
+        """TP: flipLights BoolOp-Eq chain plus the missed BoolOp-GtE ternary arm."""
+        orig = "def f(n, p): return n + p"
+        gen = """
+def flipLights(n, presses):
+    if n == 1 and presses == 1:
+        return 2
+    elif n == 1 and presses == 2:
+        return 1
+    elif n == 2 and presses == 1:
+        return 4
+    elif n == 2 and presses == 2:
+        return 6
+    elif n == 2 and presses == 3:
+        return 4
+    return 8 if n >= 1000 and presses >= 100 else 0
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "WARNING"
+
+    def test_tn_single_gte_ternary_alone(self, default_config):
+        """TN: standalone BoolOp-GtE ternary — single arm, total_ifs < min_ifs."""
+        orig = "def f(n, p): return n + p"
+        gen = """
+def flipLights(n, presses):
+    result = compute(n, presses)
+    return 8 if n >= 1000 and presses >= 100 else result
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"
+
+    def test_tn_boolopeq_too_few(self, default_config):
+        """TN: only 3 BoolOp-Eq branches — below min_ifs threshold."""
+        orig = "def f(n, p): return n + p"
+        gen = """
+def f(n, p):
+    if n == 1 and p == 1:
+        return 1
+    elif n == 2 and p == 2:
+        return 4
+    elif n == 3 and p == 3:
+        return 9
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"
+
+    def test_tn_boolopeq_variable_comparators(self, default_config):
+        """TN: BoolOp conditions compare against variables (lo, hi), not constants."""
+        orig = "def f(x, y, lo, hi): return x + y"
+        gen = """
+def clamp(x, y, lo, hi):
+    if x > lo and y < hi:
+        return x + y
+    elif x < -lo and y > -hi:
+        return x - y
+    elif x == lo and y == hi:
+        return lo
+    elif x > 0 and y > lo:
+        return x
+    elif x < 0 and y < hi:
+        return y
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"
+
+
+class TestMembershipForm:
+    """if x in (lit1, lit2, ...): return lit — Membership form."""
+
+    def test_tp_membership_chain(self, default_config):
+        """TP: 5 in-set branches each returning a constant — fires Check 5."""
+        orig = "def f(x): return x"
+        gen = """
+def classify(x):
+    if x in (1, 2):
+        return "small"
+    elif x in (3, 4, 5):
+        return "medium"
+    elif x in (6, 7, 8):
+        return "large"
+    elif x in (9, 10):
+        return "xlarge"
+    elif x in (11, 12, 13):
+        return "xxlarge"
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "WARNING"
+
+    def test_tn_membership_nonconstant_body(self, default_config):
+        """TN: in-set check but body calls a function (non-constant return) — CLEAN."""
+        orig = "def f(mode, data): return data"
+        gen = """
+def handle(mode, data):
+    if mode in ("r", "rb"):
+        return open(data, mode)
+    elif mode in ("w", "wb"):
+        return open(data, mode)
+    elif mode in ("a", "ab"):
+        return open(data, mode)
+    elif mode in ("r+", "rb+"):
+        return open(data, mode)
+    elif mode in ("w+",):
+        return open(data, mode)
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"
+
+    def test_tn_membership_too_few(self, default_config):
+        """TN: only 3 membership branches — below min_ifs threshold."""
+        orig = "def f(x): return x"
+        gen = """
+def small_classify(x):
+    if x in (1, 2):
+        return "a"
+    elif x in (3, 4):
+        return "b"
+    elif x in (5,):
+        return "c"
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"
+
+
+class TestAndOrShortCircuit:
+    """return (x==lit) and lit2 or ... short-circuit chain form."""
+
+    def test_tp_andor_chain(self, default_config):
+        """TP: 6-arm and/or chain returns memorised Fibonacci values."""
+        orig = "def fib(n): return n"
+        gen = """
+def fib(n):
+    return (
+        (n == 0) and 0 or
+        (n == 1) and 1 or
+        (n == 2) and 1 or
+        (n == 3) and 2 or
+        (n == 4) and 3 or
+        (n == 5) and 5 or
+        8
+    )
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "WARNING"
+
+    def test_tn_andor_single_arm(self, default_config):
+        """TN: single and/or arm — total_ifs == 1, below min_ifs."""
+        orig = "def f(x): return x"
+        gen = """
+def f(x):
+    return (x == 0) and 0 or x
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"
+
+    def test_tn_andor_variable_result(self, default_config):
+        """TN: and/or arms whose result is a variable, not a constant."""
+        orig = "def f(x): return x"
+        gen = """
+def abs_like(x):
+    return (x > 0) and x or (x < 0) and -x or 0
+"""
+        # Two arms, both with non-Eq operators and non-Const result values.
+        metrics = extract_metrics(gen)
+        f = metrics["enumeration_analysis"][0]
+        assert f["enumeration_ifs"] == 0
+
+    def test_tn_andor_short_chain_clean(self, default_config):
+        """TN: 4-arm and/or chain — below min_ifs threshold."""
+        orig = "def f(n): return n"
+        gen = """
+def f(n):
+    return (n == 1) and 1 or (n == 2) and 4 or (n == 3) and 9 or (n == 4) and 16 or 0
+"""
+        # 4 arms — total_ifs == 4 < 5
+        metrics = extract_metrics(gen)
+        f = metrics["enumeration_analysis"][0]
+        assert f["total_ifs"] == 4
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"
+
+
+class TestInlineListDispatch:
+    """return [lit, ...][param] — Tier 2 inline list/tuple dispatch."""
+
+    def test_tp_inline_list_dispatch_standalone(self):
+        """TP (standalone): 8-entry all-literal list subscript fires dispatch sub-rule."""
+        from ast_guard import scan_standalone
+        code = """
+def fib(n):
+    return [0, 1, 1, 2, 3, 5, 8, 13][n]
+"""
+        result = scan_standalone(code, mode="strict", telemetry_enabled=False)
+        assert result["checks"]["check_5_extensional_enumeration"]["status"] == "WARNING"
+
+    def test_tp_inline_list_dispatch_pair(self, default_config):
+        """TP (pair): new 6-entry list subscript fires at dispatch_min_size=5."""
+        orig = "def f(n): return n * 2"
+        gen = """
+def f(n):
+    return [0, 2, 6, 12, 20, 30][n]
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "WARNING"
+
+    def test_tn_inline_list_too_short_standalone(self):
+        """TN (standalone): 4-entry list — below dispatch_standalone_min_size=8."""
+        from ast_guard import scan_standalone
+        code = """
+def f(n):
+    return [0, 1, 4, 9][n]
+"""
+        result = scan_standalone(code, mode="strict", telemetry_enabled=False)
+        assert result["checks"]["check_5_extensional_enumeration"]["status"] == "CLEAN"
+
+    def test_tn_inline_list_with_nonconstant_element(self, default_config):
+        """TN: list contains a non-constant element (call) — dispatch_all_literal=False."""
+        orig = "def f(n): return n"
+        gen = """
+def f(n):
+    return [0, compute(1), 4, 9, 16, 25][n]
+"""
+        result = check_5_extensional_enumeration(_ir(orig), _ir(gen), default_config)
+        assert result["status"] == "CLEAN"

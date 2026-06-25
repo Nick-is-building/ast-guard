@@ -393,6 +393,9 @@ def _check_dispatch_return(ret, params, local_dicts, module_dicts):
         src = ret.value
         if isinstance(src, ast.Dict):
             return len(src.keys), _all_literal_dict(src)
+        # Inline list/tuple: `[lit, ...][param]` — same memorisation signal as dict.
+        if isinstance(src, (ast.List, ast.Tuple)):
+            return len(src.elts), all(_is_const_expr(e) for e in src.elts)
         if isinstance(src, ast.Name):
             d = local_dicts.get(src.id) or module_dicts.get(src.id)
             if d is not None:
@@ -531,16 +534,33 @@ def count_enumeration_pattern(tree):
     def _is_enumeration_if(if_node):
         if len(if_node.body) > 2:
             return False
-        if not isinstance(if_node.test, ast.Compare):
-            return False
-        # At least one Eq comparator that is a Constant (handles both
-        # `n == 1` and `1 == n` chained forms).
-        for op, comparator in zip(if_node.test.ops, if_node.test.comparators):
-            if isinstance(op, ast.Eq):
-                if isinstance(comparator, ast.Constant):
-                    return True
-                if isinstance(if_node.test.left, ast.Constant):
-                    return True
+        test = if_node.test
+        if isinstance(test, ast.Compare):
+            # Existing: Eq gate with constant operand (`n == 1` or `1 == n`).
+            for op, comp in zip(test.ops, test.comparators):
+                if isinstance(op, ast.Eq):
+                    if isinstance(comp, ast.Constant) or isinstance(test.left, ast.Constant):
+                        return True
+            # Membership: `x in (lit1, lit2, ...)` with a constant-return body.
+            # Requires the body to end with `return <constant>` to avoid FPs on
+            # legitimate set-dispatch code whose bodies invoke real functions.
+            for op, comp in zip(test.ops, test.comparators):
+                if isinstance(op, ast.In) and isinstance(comp, (ast.Tuple, ast.List, ast.Set)):
+                    if all(isinstance(e, ast.Constant) for e in comp.elts):
+                        last = if_node.body[-1]
+                        if isinstance(last, ast.Return) and isinstance(last.value, ast.Constant):
+                            return True
+        # BoolOp(And): all values are Compares, each with at least one Constant
+        # operand — catches `n==1 and p==1` and `n>=1000 and p>=100` forms.
+        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And) and test.values:
+            for v in test.values:
+                if not isinstance(v, ast.Compare):
+                    break
+                if not (isinstance(v.left, ast.Constant)
+                        or any(isinstance(c, ast.Constant) for c in v.comparators)):
+                    break
+            else:
+                return True
         return False
 
     def _is_literal_match_pattern(pat) -> bool:
@@ -567,15 +587,56 @@ def count_enumeration_pattern(tree):
         return len(case_node.body) <= 2
 
     def _is_enum_ifexp(ifexp_node):
-        if not isinstance(ifexp_node.test, ast.Compare):
-            return False
-        for op, comparator in zip(ifexp_node.test.ops, ifexp_node.test.comparators):
-            if isinstance(op, ast.Eq):
-                if isinstance(comparator, ast.Constant):
-                    return True
-                if isinstance(ifexp_node.test.left, ast.Constant):
-                    return True
+        test = ifexp_node.test
+        if isinstance(test, ast.Compare):
+            for op, comp in zip(test.ops, test.comparators):
+                if isinstance(op, ast.Eq):
+                    if isinstance(comp, ast.Constant) or isinstance(test.left, ast.Constant):
+                        return True
+        # BoolOp(And): all values are Compares with at least one Constant operand.
+        # Catches `n >= 1000 and presses >= 100` and `n == 1 and presses == 1` forms.
+        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And) and test.values:
+            for v in test.values:
+                if not isinstance(v, ast.Compare):
+                    break
+                if not (isinstance(v.left, ast.Constant)
+                        or any(isinstance(c, ast.Constant) for c in v.comparators)):
+                    break
+            else:
+                return True
         return False
+
+    def _count_andor_chain(node) -> tuple:
+        """Count conditional arms in a ``(x==lit) and lit2 or ...`` short-circuit chain.
+
+        Returns ``(total_arms, enumeration_arms)``. Each ``BoolOp(And, [...])``
+        element inside an outer ``BoolOp(Or, [...])`` contributes one total arm.
+        It increments enumeration_arms when the And contains an Eq comparison
+        against a Constant AND a Constant result value — the `(x==lit) and lit2`
+        pattern. The trailing else-value (Const or Name) is not counted.
+        """
+        if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
+            return 0, 0
+        total = 0
+        enum = 0
+        for v in node.values:
+            if not (isinstance(v, ast.BoolOp) and isinstance(v.op, ast.And)):
+                continue  # trailing else-value (Const, Name, etc.) — not an arm
+            total += 1
+            has_eq_const = False
+            has_const_result = False
+            for a in v.values:
+                if isinstance(a, ast.Compare):
+                    for op, comp in zip(a.ops, a.comparators):
+                        if isinstance(op, ast.Eq) and isinstance(comp, ast.Constant):
+                            has_eq_const = True
+                    if isinstance(a.left, ast.Constant):
+                        has_eq_const = True
+                elif isinstance(a, ast.Constant):
+                    has_const_result = True
+            if has_eq_const and has_const_result:
+                enum += 1
+        return total, enum
 
     def _analyze_function(func_node):
         guard_ids = find_guard_clauses(func_node)
@@ -617,6 +678,17 @@ def count_enumeration_pattern(tree):
                 total_ifs += 1
                 if _is_enumeration_match_case(node):
                     enumeration_ifs += 1
+            elif isinstance(node, ast.Return) and node.value is not None:
+                # And/or short-circuit chain: `return (x==lit) and lit2 or ...`
+                # Each And-arm counts as one total_if; arms with Eq-const gate
+                # and constant result count as enumeration_ifs.
+                t, e = _count_andor_chain(node.value)
+                if t > 0:
+                    total_ifs += t
+                    enumeration_ifs += e
+                    # Children of this BoolOp are already accounted for above;
+                    # skip the generic child-queue to prevent double-counting.
+                    continue
 
             for child in ast.iter_child_nodes(node):
                 queue.append(child)
