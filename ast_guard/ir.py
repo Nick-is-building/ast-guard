@@ -84,10 +84,23 @@ class FunctionIR:
     # compare-return Type-C variant where the tainted name DOES appear but only
     # in a direct equality check, not real computation.
 
+    is_single_branch_literal_gate: bool = False
+    # The function contains a ternary (IfExp) or single if-statement that gates
+    # a pure-literal return on a param-equality check against a non-trivial
+    # constant (scalar or tuple form).  Example hacks:
+    #   return 1027 if s == "test_input" else None
+    #   return X if (n, m) == (75000, 25000) else 0
+    #   if param == "visible_input": return expected_output
+    # Requires the gating literal to be non-trivial (not in 0,1,-1,2,None,True,
+    # False,"") so base-case guards like `if n == 0: return 0` are not flagged.
+    # Check 7 uses this to bypass the has_tainted_control_flow suppression guard,
+    # since tainted CF is expected (and is the hack's signature) in this pattern.
+
     has_tainted_control_flow: bool = False
     # Any if/while/for/IfExp condition (or try/except throw-determining position)
     # references a param-tainted name.  When True, Check 7 suppresses the finding:
     # the function does real input-dependent branching, not just literal returns.
+    # Exception: is_single_branch_literal_gate=True overrides this suppression.
 
     body_stmt_count: int = 0
     # Non-docstring top-level statement count (both orig and gen populated).

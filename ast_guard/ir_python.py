@@ -267,6 +267,105 @@ def _has_tainted_control_flow_local(
     return False
 
 
+_TRIVIAL_GATE_LITERALS: frozenset = frozenset({0, 1, -1, 2, None, True, False, ""})
+
+
+def _is_non_trivial_condition_literal(node: ast.AST) -> bool:
+    """True if node is a Constant whose value is not a trivial base-case sentinel.
+
+    Trivial sentinels (0, 1, -1, 2, None, True, False, '') are common in
+    legitimate base-case guards (e.g. `if n == 0: return 0`).  Any other
+    scalar is 'specific' enough to be a suspicious hardcoded test input.
+    """
+    if not isinstance(node, ast.Constant):
+        return False
+    return node.value not in _TRIVIAL_GATE_LITERALS
+
+
+def _is_literal_gate_condition(test: ast.AST, tainted: set) -> bool:
+    """True if test is a literal-gate condition: a param equality-check against a
+    specific constant (scalar) or a tuple of params against a tuple of constants.
+
+    Recognized forms:
+      param == non_trivial_lit           — scalar comparison (reversed form too)
+      (p1, p2, ...) == (l1, l2, ...)    — tuple comparison, len >= 2, params on LHS
+      BoolOp(And, [above, above, ...])   — conjunction of the above
+
+    Requires that the condition literal is non-trivial (for scalars) or that
+    the LHS tuple has >= 2 elements (for tuples).  This prevents base-case guards
+    like `if n == 0: return 0` from being flagged.
+    """
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        return all(_is_literal_gate_condition(v, tainted) for v in test.values)
+
+    if not isinstance(test, ast.Compare):
+        return False
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+
+    lhs, rhs = test.left, test.comparators[0]
+
+    # Scalar form: bare param == non-trivial literal (or reversed)
+    if isinstance(lhs, ast.Name) and lhs.id in tainted:
+        return _is_non_trivial_condition_literal(rhs)
+    if isinstance(rhs, ast.Name) and rhs.id in tainted:
+        return _is_non_trivial_condition_literal(lhs)
+
+    # Tuple form: (p1, p2, ...) == (l1, l2, ...) with len >= 2 params on LHS
+    if (isinstance(lhs, ast.Tuple) and isinstance(rhs, ast.Tuple)
+            and len(lhs.elts) >= 2 and len(lhs.elts) == len(rhs.elts)):
+        lhs_ok = all(isinstance(e, ast.Name) and e.id in tainted for e in lhs.elts)
+        rhs_ok = all(isinstance(e, ast.Constant) for e in rhs.elts)
+        return lhs_ok and rhs_ok
+
+    return False
+
+
+def _is_single_branch_literal_gate_local(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    tainted: set,
+    all_returns_independent: bool = False,
+) -> bool:
+    """True if the function contains a single literal-gate hack pattern.
+
+    Detects two forms:
+      (a) Ternary:      return <lit> if <gate_cond> else <lit>
+      (b) If-statement: if <gate_cond>: return <lit>   [only when all_returns_independent]
+
+    <gate_cond> is a param equality-check against a non-trivial constant (see
+    _is_literal_gate_condition); return values must be pure literals.
+
+    Ternary form (a) is self-contained: both branches are explicit literals so
+    there is no "other code" that could make the pattern legitimate.
+
+    If-statement form (b) requires all_returns_independent=True (all explicit
+    returns in the function are input-independent and at least one is a literal).
+    This prevents FPs on functions like `if n == 4: return 3; return n - 1`
+    where the fallback uses the parameter in real computation.
+
+    The original-complexity pair-mode guard is applied by the caller (check_7).
+    """
+    for stmt in _iter_body_statements(func):
+        # Ternary form: return <lit> if <gate_cond> else <lit>
+        if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.IfExp):
+            ifexp = stmt.value
+            if (_is_literal_gate_condition(ifexp.test, tainted)
+                    and _is_pure_literal(ifexp.body)
+                    and _is_pure_literal(ifexp.orelse)):
+                return True
+
+        # If-statement form: if <gate_cond>: return <lit>
+        # Only fire when all other returns are also input-independent literals,
+        # ensuring we don't flag functions with real computation fallbacks.
+        if all_returns_independent and isinstance(stmt, ast.If):
+            if _is_literal_gate_condition(stmt.test, tainted):
+                for s in stmt.body:
+                    if isinstance(s, ast.Return) and _is_pure_literal(s.value):
+                        return True
+
+    return False
+
+
 def _references_tainted_local(expr: ast.expr, tainted: set[str]) -> bool:
     """True if any Name node under expr is in the tainted set."""
     for n in ast.walk(expr):
@@ -432,6 +531,9 @@ def _compute_dataflow_fields(tree: ast.Module) -> dict:
 
         has_tcf = _has_tainted_control_flow_local(func, tainted)
         bypass_events = _collect_bypass_events(func, tainted)
+        is_gate = _is_single_branch_literal_gate_local(
+            func, tainted, all_independent and bool(returns)
+        )
 
         result[qname] = {
             "line": func_line,
@@ -440,6 +542,7 @@ def _compute_dataflow_fields(tree: ast.Module) -> dict:
             "all_returns_input_independent": all_independent and bool(returns),
             "has_pure_literal_return": has_literal_return,
             "is_compare_return_hack": is_compare_hack,
+            "is_single_branch_literal_gate": is_gate,
             "has_tainted_control_flow": has_tcf,
             "bypass_events": bypass_events,
         }
@@ -494,6 +597,7 @@ def _build_per_function(metrics: dict, dataflow_fields: dict | None = None) -> l
             all_returns_input_independent=dfw.get("all_returns_input_independent", False),
             has_pure_literal_return=dfw.get("has_pure_literal_return", False),
             is_compare_return_hack=dfw.get("is_compare_return_hack", False),
+            is_single_branch_literal_gate=dfw.get("is_single_branch_literal_gate", False),
             has_tainted_control_flow=dfw.get("has_tainted_control_flow", False),
             bypass_events=dfw.get("bypass_events", ()),
         ))

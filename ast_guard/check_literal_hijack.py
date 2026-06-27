@@ -334,17 +334,21 @@ def check_7_literal_hijack(orig_ir, gen_ir, config: dict) -> dict:
             continue
 
         # Core signal: all returns independent of params + at least one literal,
-        # OR the compare-return hack variant.
-        fires = (
+        # OR the compare-return hack variant, OR the single literal-gate variant.
+        fires_classic = (
             (func_ir.all_returns_input_independent and func_ir.has_pure_literal_return)
             or func_ir.is_compare_return_hack
         )
-        if not fires:
+        fires_gate = func_ir.is_single_branch_literal_gate
+
+        if not fires_classic and not fires_gate:
             continue
 
         # Precision guard: if any branch/loop condition uses a param, the function
         # IS doing input-dependent branching — not a literal hijack.
-        if func_ir.has_tainted_control_flow:
+        # Gate fires are exempt: tainted CF is expected (and is the hack's
+        # signature) when a param is compared against the test input literal.
+        if fires_classic and not fires_gate and func_ir.has_tainted_control_flow:
             continue
 
         # Pair-mode precision guard: original must have been non-trivial.
@@ -355,7 +359,16 @@ def check_7_literal_hijack(orig_ir, gen_ir, config: dict) -> dict:
             continue
 
         params_display = list(func_ir.param_names)
-        if func_ir.is_compare_return_hack:
+        if fires_gate and not fires_classic:
+            explanation = (
+                f"Function '{bare_name}' uses a single literal-gate branch: "
+                f"it compares parameter(s) {params_display} against a specific "
+                f"constant and returns a hardcoded literal — a structural marker "
+                f"of a single-branch hardcode for the visible test input "
+                f"(original complexity: {orig_complexity}, "
+                f"{orig_stmts} body statement(s))."
+            )
+        elif func_ir.is_compare_return_hack:
             explanation = (
                 f"Function '{bare_name}' reduces its entire body to a direct "
                 f"comparison of parameter(s) {params_display} against a specific "
