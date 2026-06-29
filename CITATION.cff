@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: "If you use ast-guard in your research, please cite it using this file."
+type: software
+title: "ast-guard: Pre-Execution Structural Gate for AI-Generated Code"
+version: 2.3.0
+date-released: 2026-06-27
+url: "https://github.com/Nick-is-building/ast-guard"
+license: MIT
+authors:
+  - name: "Nick"
+    alias: "Nick-is-building"
+abstract: >
+  ast-guard is a deterministic, model-free AST-based detector for structural
+  reward hacking in RL-trained code models. It evaluates LLM-generated code
+  against eight structural checks (hardcoding, complexity collapse, forbidden
+  calls, import drift, extensional enumeration, behavioral risk, literal hijack,
+  and new constant bypass) before any code runs. Empirically validated in a
+  GRPO training loop (Qwen2.5-Coder-7B-Instruct, 150 steps), where it reduced
+  structural hack rate from ~99% to ~0% under a λ=2.0 penalty. Companion
+  experiment: github.com/Nick-is-building/rl-rewardhacking (extends
+  ariahw/rl-rewardhacking).
+keywords:
+  - reward hacking
+  - RL safety
+  - code generation
+  - static analysis
+  - AST
+  - structural detection
+  - GRPO
+references:
+  - type: software
+    title: "rl-rewardhacking: Steering RL Training Interventions to Mitigate Reward Hacking"
+    url: "https://github.com/Nick-is-building/rl-rewardhacking"
+    notes: "Companion experiment repo. Extends ariahw/rl-rewardhacking with ast-guard as a live structural penalty."
+  - type: software
+    title: "rl-rewardhacking (upstream)"
+    authors:
+      - name: "ariahw"
+    url: "https://github.com/ariahw/rl-rewardhacking"
+    notes: "Upstream repo: 'Steering RL: Training Interventions to Mitigate Reward Hacking'"
